@@ -32,6 +32,7 @@ class RemotePreferences(private val context: Context) {
         val KEY_SOUND_FEEDBACK = booleanPreferencesKey("sound_feedback_enabled")
         val KEY_EASY_MODE = booleanPreferencesKey("easy_mode_enabled")
         val KEY_FIRST_LAUNCH_DONE = booleanPreferencesKey("first_launch_done")
+        val KEY_TMDB = stringPreferencesKey("tmdb_api_key")
     }
 
     val pairedDeviceFlow: Flow<TvDevice?> = context.dataStore.data.map { prefs ->
@@ -40,8 +41,8 @@ class RemotePreferences(private val context: Context) {
         if (id != null && host != null) {
             TvDevice(
                 id = id,
-                name = prefs[KEY_PAIRED_DEVICE_NAME] ?: "Lumio Vision 7",
-                model = "Lumio Vision 7 (2026)",
+                name = prefs[KEY_PAIRED_DEVICE_NAME] ?: "Google TV",
+                model = "Google TV",
                 host = host,
                 port = prefs[KEY_PAIRED_DEVICE_PORT] ?: 6466,
                 macAddress = prefs[KEY_PAIRED_DEVICE_MAC],
@@ -116,6 +117,12 @@ class RemotePreferences(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_FIRST_LAUNCH_DONE] = true
         }
+    }
+
+    val tmdbKeyFlow: Flow<String> = context.dataStore.data.map { prefs -> prefs[KEY_TMDB] ?: "" }
+
+    suspend fun saveTmdbKey(key: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_TMDB] = key.trim() }
     }
 
     suspend fun saveTlsCredentials(certPem: String, keyPem: String) {

@@ -3,6 +3,10 @@ package com.smarttv.remote.data.protocol
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.mediarouter.media.MediaControlIntent
+import androidx.mediarouter.media.MediaRouteSelector
+import androidx.mediarouter.media.MediaRouter
+import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -21,6 +25,73 @@ class CastManager(private val context: Context) {
         private const val TAG = "CastManager"
     }
 
+    data class CastRoute(val id: String, val name: String, val description: String?)
+
+    private val mediaRouter: MediaRouter? = try { MediaRouter.getInstance(context) } catch (e: Exception) { null }
+    private val selector = MediaRouteSelector.Builder()
+        .addControlCategory(CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
+        .build()
+    private val routeCallback = object : MediaRouter.Callback() {
+        override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
+        override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
+        override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
+    }
+    private var scanning = false
+    private val mediaServer = LocalMediaServer(context)
+
+    private val _routes = MutableStateFlow<List<CastRoute>>(emptyList())
+    val routes: StateFlow<List<CastRoute>> = _routes.asStateFlow()
+
+    private val _castStatus = MutableStateFlow<String?>(null)
+    val castStatus: StateFlow<String?> = _castStatus.asStateFlow()
+
+    /** Starts looking for Cast devices (the TV) on the Wi-Fi. Call from the main thread. */
+    fun startScan() {
+        val router = mediaRouter ?: return
+        if (!scanning) {
+            router.addCallback(selector, routeCallback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+            scanning = true
+        }
+        refreshRoutes()
+    }
+
+    fun stopScan() {
+        val router = mediaRouter ?: return
+        if (scanning) {
+            router.removeCallback(routeCallback)
+            scanning = false
+        }
+    }
+
+    private fun refreshRoutes() {
+        val router = mediaRouter ?: return
+        _routes.value = router.routes
+            .filter { !it.isDefault && !it.isBluetooth && it.matchesSelector(selector) }
+            .map { CastRoute(it.id, it.name, it.description) }
+    }
+
+    /** Picking a route makes the Cast framework open a session to that TV. */
+    fun selectRoute(id: String) {
+        val router = mediaRouter ?: return
+        val route = router.routes.firstOrNull { it.id == id } ?: return
+        _castStatus.value = "Connecting to ${route.name}..."
+        router.selectRoute(route)
+    }
+
+    /** Serves a file from this phone and plays it on the TV. Returns an error text or null. */
+    fun castLocalFile(uri: Uri, mimeType: String): String? {
+        val client = currentCastSession?.remoteMediaClient
+            ?: return "Choose your TV first."
+        val url = try {
+            mediaServer.serve(uri, mimeType)
+        } catch (e: Exception) {
+            return "Could not share the file: ${e.message}"
+        } ?: return "Could not find this phone's Wi-Fi address."
+        castMedia(url = url, title = mediaServer.displayName(uri), mimeType = mimeType)
+        _castStatus.value = "Playing on ${_castDeviceName.value ?: "TV"}"
+        return null
+    }
+
     private var castContext: CastContext? = null
     private var currentCastSession: CastSession? = null
 
@@ -36,9 +107,11 @@ class CastManager(private val context: Context) {
             currentCastSession = session
             _isCastConnected.value = true
             _castDeviceName.value = session.castDevice?.friendlyName ?: "Google Cast Receiver"
+            _castStatus.value = "Connected to ${_castDeviceName.value}"
             Log.d(TAG, "Cast session started with ${session.castDevice?.friendlyName}")
         }
         override fun onSessionStartFailed(session: CastSession, error: Int) {
+            _castStatus.value = "Could not connect to the TV for casting."
             currentCastSession = null
             _isCastConnected.value = false
             _castDeviceName.value = null
@@ -121,5 +194,7 @@ class CastManager(private val context: Context) {
 
     fun disconnect() {
         castContext?.sessionManager?.endCurrentSession(true)
+        mediaServer.stop()
+        _castStatus.value = null
     }
 }

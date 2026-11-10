@@ -11,6 +11,13 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import com.smarttv.remote.data.content.ContentItem
+import com.smarttv.remote.data.content.ContentState
+import com.smarttv.remote.data.content.Platform
+import com.smarttv.remote.data.content.TmdbClient
 import com.smarttv.remote.data.local.RemotePreferences
 import com.smarttv.remote.data.model.*
 import com.smarttv.remote.data.protocol.*
@@ -49,7 +56,15 @@ data class RemoteUiState(
     val isBusy: Boolean = false,
     val errorMessage: String? = null,
     val userMessage: String? = null,
-    val savedDeviceLoaded: Boolean = false
+    val savedDeviceLoaded: Boolean = false,
+    val contentState: ContentState = ContentState.Idle,
+    val tmdbKey: String = "",
+    val tvAwake: Boolean? = null,
+    val protocolLog: List<String> = emptyList(),
+    val castConnected: Boolean = false,
+    val castDeviceName: String? = null,
+    val castStatus: String? = null,
+    val castRoutes: List<CastManager.CastRoute> = emptyList()
 )
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
@@ -78,6 +93,121 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         observeSession()
         setupVoiceListener()
         loadSavedDeviceAndReconnect()
+        observeTvState()
+        observeCast()
+        observeContentKey()
+    }
+
+    private fun observeTvState() {
+        viewModelScope.launch {
+            remoteSession.tvAwake.collect { awake -> _uiState.update { it.copy(tvAwake = awake) } }
+        }
+        viewModelScope.launch {
+            remoteSession.log.collect { log -> _uiState.update { it.copy(protocolLog = log) } }
+        }
+    }
+
+    private fun observeCast() {
+        viewModelScope.launch {
+            castManager.routes.collect { r -> _uiState.update { it.copy(castRoutes = r) } }
+        }
+        viewModelScope.launch {
+            castManager.isCastConnected.collect { c -> _uiState.update { it.copy(castConnected = c) } }
+        }
+        viewModelScope.launch {
+            castManager.castDeviceName.collect { n -> _uiState.update { it.copy(castDeviceName = n) } }
+        }
+        viewModelScope.launch {
+            castManager.castStatus.collect { st -> _uiState.update { it.copy(castStatus = st) } }
+        }
+    }
+
+    private fun observeContentKey() {
+        viewModelScope.launch {
+            preferences.tmdbKeyFlow.distinctUntilChanged().collect { key ->
+                _uiState.update { it.copy(tmdbKey = key) }
+                loadContent()
+            }
+        }
+    }
+
+    fun loadContent() {
+        val key = _uiState.value.tmdbKey
+        if (key.isBlank()) {
+            _uiState.update { it.copy(contentState = ContentState.NeedsKey) }
+            return
+        }
+        _uiState.update { it.copy(contentState = ContentState.Loading) }
+        viewModelScope.launch {
+            val state = try {
+                val rows = TmdbClient(key).loadHome()
+                if (rows.isEmpty()) ContentState.Error("Nothing found right now. Please try again later.")
+                else ContentState.Loaded(rows)
+            } catch (e: TmdbClient.AuthException) {
+                ContentState.Error("That TMDB key was not accepted. Check it in Settings.")
+            } catch (e: java.io.IOException) {
+                ContentState.Error("Can't load shows. Check the phone's internet connection.")
+            } catch (e: Exception) {
+                ContentState.Error("Could not load shows: ${e.message}")
+            }
+            _uiState.update { it.copy(contentState = state) }
+        }
+    }
+
+    fun saveTmdbKey(key: String) {
+        viewModelScope.launch { preferences.saveTmdbKey(key) }
+    }
+
+    fun openPlatform(platform: Platform) {
+        triggerHaptic()
+        viewModelScope.launch {
+            if (!ensureConnected()) return@launch
+            if (!remoteSession.launchApp("market://launch?id=${platform.tvPackage}")) {
+                toast("Could not open ${platform.label} on the TV.")
+            }
+        }
+    }
+
+    fun playOnTv(item: ContentItem) {
+        openPlatform(item.platform)
+    }
+
+    /** Types the title into whatever search box is open on the TV. */
+    fun typeTitleOnTv(title: String) {
+        triggerHaptic()
+        viewModelScope.launch {
+            if (!ensureConnected()) return@launch
+            if (!remoteSession.sendText(title)) toast("Could not type on the TV.")
+        }
+    }
+
+    // ---- Cast ----
+    fun startCastScan() = castManager.startScan()
+    fun stopCastScan() = castManager.stopScan()
+    fun selectCastRoute(id: String) = castManager.selectRoute(id)
+    fun stopCast() = castManager.disconnect()
+
+    fun castFile(uri: Uri, fallbackMime: String) {
+        val mime = context.contentResolver.getType(uri) ?: fallbackMime
+        val error = castManager.castLocalFile(uri, mime)
+        if (error != null) toast(error)
+    }
+
+    fun castScreen() {
+        val intents = listOf(
+            Intent(Settings.ACTION_CAST_SETTINGS),
+            Intent("android.settings.WIFI_DISPLAY_SETTINGS"),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS)
+        )
+        for (i in intents) {
+            try {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(i)
+                return
+            } catch (_: Exception) {
+            }
+        }
+        toast("Open your phone's Quick Settings and tap Cast / Smart View.")
     }
 
     private fun checkWifiConnection() {
@@ -450,6 +580,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         triggerHaptic()
         viewModelScope.launch {
             if (!ensureConnected()) return@launch
+            if (_uiState.value.tvAwake == false && command != RemoteCommand.POWER) {
+                toast("The TV screen is off. Press the red Power button first.")
+            }
             if (!remoteSession.sendCommand(command)) {
                 toast("Command not sent. TV connection lost.")
             }
@@ -542,8 +675,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         triggerHaptic()
         viewModelScope.launch {
             if (!ensureConnected()) return@launch
-            val link = if (app.deepLinkUri.startsWith("http")) app.deepLinkUri else "market://launch?id=${app.packageName}"
-            if (!remoteSession.launchApp(link)) {
+            if (!remoteSession.launchApp("market://launch?id=${app.packageName}")) {
                 toast("Could not open ${app.name} on the TV.")
             }
         }

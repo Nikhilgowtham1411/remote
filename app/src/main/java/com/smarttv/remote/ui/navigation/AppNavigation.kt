@@ -22,6 +22,7 @@ object Destinations {
     const val TV_DISCOVERY = "tv_discovery"
     const val PAIRING = "pairing"
     const val CONNECTION_SUCCESS = "connection_success"
+    const val HOME = "home"
     const val MAIN_REMOTE = "main_remote"
     const val PLAYBACK_CONTROL = "playback_control"
     const val SKIP_DURATION = "skip_duration"
@@ -157,6 +158,28 @@ fun AppNavigation(
         }
 
         // SCREEN 07: MAIN REMOTE
+        // HOME: shows and movies from JioHotstar / Netflix
+        composable(Destinations.HOME) {
+            LaunchedEffect(Unit) {
+                if (uiState.contentState is com.smarttv.remote.data.content.ContentState.Idle) viewModel.loadContent()
+            }
+            HomeScreen(
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
+                tvModel = uiState.selectedDevice?.model ?: "Google TV",
+                isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
+                contentState = uiState.contentState,
+                tmdbKey = uiState.tmdbKey,
+                onSaveKey = { viewModel.saveTmdbKey(it) },
+                onRetry = { viewModel.loadContent() },
+                onOpenPlatform = { viewModel.openPlatform(it) },
+                onPlayItem = { viewModel.playOnTv(it) },
+                onTypeTitle = { viewModel.typeTitleOnTv(it) },
+                onSettingsClick = { navController.navigate(Destinations.SETTINGS) },
+                onTvSelectClick = { navController.navigate(Destinations.TV_DISCOVERY) },
+                onNavigateTab = { tab -> handleTabNavigation(tab, navController) }
+            )
+        }
+
         composable(Destinations.MAIN_REMOTE) {
             MainRemoteScreen(
                 tvName = uiState.selectedDevice?.name ?: "No TV selected",
@@ -233,30 +256,16 @@ fun AppNavigation(
                 tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
-                onCastScreenClick = {
-                    // Handle Screen Casting
-                },
-                onCastVideoClick = {
-                    viewModel.castManager.castMedia(
-                        url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-                        title = "Big Buck Bunny",
-                        subtitle = "Cast Demo Video"
-                    )
-                },
-                onCastPhotosClick = {
-                    viewModel.castManager.castMedia(
-                        url = "https://picsum.photos/1920/1080",
-                        title = "Photo Cast",
-                        mimeType = "image/jpeg"
-                    )
-                },
-                onCastMusicClick = {
-                    viewModel.castManager.castMedia(
-                        url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-                        title = "Ambient Music Track",
-                        mimeType = "audio/mp3"
-                    )
-                },
+                castConnected = uiState.castConnected,
+                castDeviceName = uiState.castDeviceName,
+                castStatus = uiState.castStatus,
+                routes = uiState.castRoutes,
+                onStartScan = { viewModel.startCastScan() },
+                onStopScan = { viewModel.stopCastScan() },
+                onSelectRoute = { viewModel.selectCastRoute(it) },
+                onCastFile = { uri, mime -> viewModel.castFile(uri, mime) },
+                onCastScreenClick = { viewModel.castScreen() },
+                onStopCast = { viewModel.stopCast() },
                 onSettingsClick = { navController.navigate(Destinations.SETTINGS) },
                 onTvSelectClick = { navController.navigate(Destinations.TV_DISCOVERY) },
                 onNavigateTab = { tab -> handleTabNavigation(tab, navController) }
@@ -296,7 +305,11 @@ fun AppNavigation(
                 onSkipSettingsClick = { navController.navigate(Destinations.SKIP_DURATION) },
                 onBackClick = { navController.popBackStack() },
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
-                connectionError = uiState.errorMessage
+                connectionError = uiState.errorMessage,
+                protocolLog = uiState.protocolLog,
+                tvAwake = uiState.tvAwake,
+                tmdbKey = uiState.tmdbKey,
+                onSaveKey = { viewModel.saveTmdbKey(it) }
             )
         }
     }
@@ -304,6 +317,7 @@ fun AppNavigation(
 
 private fun handleTabNavigation(tab: NavTab, navController: NavHostController) {
     val destination = when (tab) {
+        NavTab.HOME -> Destinations.HOME
         NavTab.REMOTE -> Destinations.MAIN_REMOTE
         NavTab.APPS -> Destinations.TV_APPS
         NavTab.CAST -> Destinations.CAST

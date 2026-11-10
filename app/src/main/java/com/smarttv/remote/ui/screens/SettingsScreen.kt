@@ -38,7 +38,11 @@ fun SettingsScreen(
     onSkipSettingsClick: () -> Unit,
     onBackClick: () -> Unit,
     isConnected: Boolean = false,
-    connectionError: String? = null
+    connectionError: String? = null,
+    protocolLog: List<String> = emptyList(),
+    tvAwake: Boolean? = null,
+    tmdbKey: String = "",
+    onSaveKey: (String) -> Unit = {}
 ) {
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
 
@@ -272,6 +276,14 @@ fun SettingsScreen(
                     DiagnosticLine("Paired", if (currentDevice?.isPaired == true) "Yes" else "No")
                     DiagnosticLine("Session", if (isConnected) "Connected" else "Offline")
                     DiagnosticLine("Protocol", "Google TV Remote v2")
+                    DiagnosticLine("TV screen", when (tvAwake) { true -> "On"; false -> "Off (standby)"; null -> "Unknown" })
+                    if (protocolLog.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(text = "Recent activity", color = TextSecondary, fontSize = 12.sp)
+                        protocolLog.takeLast(12).forEach {
+                            Text(text = it, color = TextPrimary, fontSize = 11.sp)
+                        }
+                    }
                     if (!isConnected && connectionError != null) {
                         Text(text = connectionError, color = PowerRed, fontSize = 12.sp)
                     }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material3.Icon
@@ -27,6 +28,7 @@ import com.smarttv.remote.ui.theme.NeonBlue
 import com.smarttv.remote.ui.theme.TextSecondary
 
 enum class NavTab(val title: String, val icon: ImageVector) {
+    HOME("Home", Icons.Default.Home),
     REMOTE("Remote", Icons.Default.SettingsRemote),
     APPS("Apps", Icons.Default.GridView),
     CAST("Cast", Icons.Default.Cast),
@@ -56,7 +58,7 @@ fun BottomNavBar(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .clickable { onTabSelected(tab) }
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 Icon(
                     imageVector = tab.icon,
@@ -68,7 +70,7 @@ fun BottomNavBar(
                 Text(
                     text = tab.title,
                     color = if (isSelected) NeonBlue else TextSecondary,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                 )
             }

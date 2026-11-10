@@ -68,6 +68,10 @@ dependencies {
 
     // Google Cast SDK
     implementation(libs.play.services.cast.framework)
+    implementation(libs.androidx.mediarouter)
+
+    // Poster images for the Home screen
+    implementation(libs.coil.compose)
 
     // Cryptography for TLS & X.509 Certificates (Android TV Remote v2)
     implementation(libs.bouncycastle.bcprov)

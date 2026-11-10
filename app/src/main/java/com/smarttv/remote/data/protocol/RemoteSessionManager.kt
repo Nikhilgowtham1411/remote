@@ -48,7 +48,9 @@ class RemoteSessionManager {
     companion object {
         private const val TAG = "RemoteSession"
 
-        private const val FEATURES = 622 // ping | key | ime | power | volume | app link
+        // PING(1) | KEY(2) | POWER(32) | VOLUME(64) | APP_LINK(512). The reply to the TV must be
+        // limited to what the TV itself advertises, otherwise newer TVs silently ignore keys.
+        private const val WANTED_FEATURES = 1 or 2 or 32 or 64 or 512
 
         private const val DIRECTION_START_LONG = 1
         private const val DIRECTION_END_LONG = 2
@@ -64,6 +66,24 @@ class RemoteSessionManager {
 
     private val _connectionError = MutableStateFlow<String?>(null)
     val connectionError: StateFlow<String?> = _connectionError.asStateFlow()
+
+    private val _tvAwake = MutableStateFlow<Boolean?>(null)
+    /** false = TV is in standby (keys are ignored except Power), null = not known yet. */
+    val tvAwake: StateFlow<Boolean?> = _tvAwake.asStateFlow()
+
+    private val _currentApp = MutableStateFlow("")
+    val currentApp: StateFlow<String> = _currentApp.asStateFlow()
+
+    private val _log = MutableStateFlow<List<String>>(emptyList())
+    /** Last protocol events, shown in Settings > Connection Diagnostics. */
+    val log: StateFlow<List<String>> = _log.asStateFlow()
+
+    @Volatile private var activeFeatures = WANTED_FEATURES
+
+    private fun note(line: String) {
+        Log.d(TAG, line)
+        _log.value = (_log.value + line).takeLast(60)
+    }
 
     private var socket: SSLSocket? = null
     private var output: OutputStream? = null
@@ -101,11 +121,19 @@ class RemoteSessionManager {
                 receivedAnything = true
                 for (f in fields) {
                     when (f.number) {
-                        1 -> sendConfigure()
-                        2 -> sendSetActive()
+                        1 -> {
+                            val tvFeatures = f.bytes?.let { ProtoReader.find(ProtoReader.parse(it), 1)?.varint?.toInt() } ?: WANTED_FEATURES
+                            activeFeatures = WANTED_FEATURES and tvFeatures
+                            note("TV configure: features=$tvFeatures, using=$activeFeatures")
+                            sendConfigure()
+                        }
+                        2 -> { note("TV set_active"); sendSetActive() }
                         3 -> throw IOException("TV reported an error during handshake")
                         8 -> answerPing(f)
-                        40 -> started = true
+                        40 -> {
+                            started = true
+                            handleStart(f)
+                        }
                     }
                 }
             }
@@ -148,7 +176,11 @@ class RemoteSessionManager {
                     when (f.number) {
                         2 -> sendSetActive()
                         8 -> answerPing(f)
-                        3 -> Log.w(TAG, "TV reported a remote error")
+                        3 -> note("TV reported a remote error")
+                        40 -> handleStart(f)
+                        20 -> handleIme(f)
+                        50 -> {} // volume level: not used
+                        else -> note("TV message #${f.number}")
                     }
                 }
             } catch (e: SocketTimeoutException) {
@@ -180,9 +212,10 @@ class RemoteSessionManager {
         if (!_isConnected.value) return@withContext false
         try {
             send { message(10) { int(1, keyCode); int(2, DIRECTION_SHORT) } }
+            note("sent key $keyCode")
             true
         } catch (e: Exception) {
-            Log.w(TAG, "Key $keyCode failed: ${e.message}")
+            note("key $keyCode failed: ${e.message}")
             markLost("Connection to the TV was lost.")
             false
         }
@@ -214,6 +247,7 @@ class RemoteSessionManager {
         if (!_isConnected.value) return@withContext false
         try {
             send { message(90) { string(1, appLink) } }
+            note("sent app link $appLink")
             true
         } catch (e: Exception) {
             markLost("Connection to the TV was lost.")
@@ -229,21 +263,34 @@ class RemoteSessionManager {
         }
     }
 
+    private fun handleStart(f: ProtoField) {
+        val started = f.bytes?.let { ProtoReader.find(ProtoReader.parse(it), 1)?.varint?.toInt() } ?: 1
+        _tvAwake.value = started != 0
+        note("TV ${if (started != 0) "is on" else "screen is off (standby)"}")
+    }
+
+    private fun handleIme(f: ProtoField) {
+        try {
+            val inner = f.bytes?.let { ProtoReader.parse(it) } ?: return
+            val app = ProtoReader.find(inner, 1)?.bytes?.let { ProtoReader.find(ProtoReader.parse(it), 12)?.bytes }
+            if (app != null) _currentApp.value = String(app, Charsets.UTF_8)
+        } catch (_: Exception) {
+        }
+    }
+
     private suspend fun sendConfigure() = send {
         message(1) {
-            int(1, FEATURES)
+            int(1, activeFeatures)
             message(2) {
-                string(1, "Android")
-                string(2, "Smart TV Remote")
                 int(3, 1)
                 string(4, "1")
-                string(5, "com.smarttv.remote")
+                string(5, "atvremote")
                 string(6, "1.0.0")
             }
         }
     }
 
-    private suspend fun sendSetActive() = send { message(2) { int(1, FEATURES) } }
+    private suspend fun sendSetActive() = send { message(2) { int(1, activeFeatures) } }
 
     private suspend fun answerPing(request: ProtoField) {
         val value = request.bytes?.let { ProtoReader.find(ProtoReader.parse(it), 1)?.varint?.toInt() } ?: 0
@@ -251,23 +298,35 @@ class RemoteSessionManager {
     }
 
     private fun charToKey(c: Char): Pair<Int, Boolean> {
-        val lower = c.lowercaseChar()
-        val shift = c.isUpperCase()
-        val code = when (lower) {
-            in 'a'..'z' -> 29 + (lower - 'a')
-            in '0'..'9' -> 7 + (lower - '0')
-            ' ' -> 62
-            '\n' -> KEY_ENTER
-            '.' -> 56
-            ',' -> 55
-            '-' -> 69
-            '/' -> 76
-            '@' -> 77
-            '\'' -> 75
-            ';' -> 74
-            else -> 0
+        if (c.isUpperCase() && c in 'A'..'Z') return (29 + (c - 'A')) to true
+        return when (c) {
+            in 'a'..'z' -> (29 + (c - 'a')) to false
+            in '0'..'9' -> (7 + (c - '0')) to false
+            ' ' -> 62 to false
+            '\n' -> KEY_ENTER to false
+            '.' -> 56 to false
+            ',' -> 55 to false
+            '-' -> 69 to false
+            '=' -> 70 to false
+            '/' -> 76 to false
+            '@' -> 77 to false
+            '\'' -> 75 to false
+            ';' -> 74 to false
+            '!' -> 8 to true
+            '?' -> 76 to true
+            ':' -> 74 to true
+            '(' -> 16 to true
+            ')' -> 7 to true
+            '$' -> 11 to true
+            '&' -> 14 to true
+            '"' -> 75 to true
+            '_' -> 69 to true
+            '+' -> 70 to true
+            '*' -> 15 to true
+            '#' -> 18 to false
+            '%' -> 12 to true
+            else -> 0 to false
         }
-        return code to shift
     }
 
     private fun closeSocket() {
@@ -279,6 +338,7 @@ class RemoteSessionManager {
         }
         socket = null
         output = null
+        _tvAwake.value = null
     }
 
     fun disconnect() {
