@@ -65,7 +65,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     // Google Cast SDK
-    implementation(libs.play-services-cast-framework)
+    implementation(libs.play.services.cast.framework)
 
     // Cryptography for TLS & X.509 Certificates (Android TV Remote v2)
     implementation(libs.bouncycastle.bcprov)
