@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0c12">
+<title>Screensaver Loop</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Unbounded:wght@500;600&display=swap">
+<style>
+/* Layout: one calm column. Header, picker, playlist, options, how-to. Full-screen black stage for playback.
+   Palette: night ink, blue-violet lamp accent (matches the TV remote app). Type: Unbounded for the name only, Inter for UI, JetBrains Mono for clip data. */
+:root {
+  --bg: #0a0c12;
+  --surface: #121621;
+  --surface-2: #1a2030;
+  --line: #252c3f;
+  --fg: #e9edf6;
+  --dim: #97a0b5;
+  --accent: #5b8cff;
+  --accent-2: #9a5bff;
+  --accent-fg: #ffffff;
+  --danger: #ff7b7b;
+  --ok: #3ddc84;
+  --warn: #ffb020;
+  --shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  --stage-bg: #000000;
+  --stage-fg: #ffffff;
+  --font-display: 'Unbounded', 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f2f4fa; --surface: #ffffff; --surface-2: #eceff7; --line: #d6dcea;
+    --fg: #0d1220; --dim: #535d76; --accent: #2f63e8; --accent-2: #7a3df0;
+    --danger: #c93636; --ok: #11804a; --warn: #a85f00; --shadow: 0 10px 28px rgba(20, 30, 60, .14);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f2f4fa; --surface: #ffffff; --surface-2: #eceff7; --line: #d6dcea;
+  --fg: #0d1220; --dim: #535d76; --accent: #2f63e8; --accent-2: #7a3df0;
+  --danger: #c93636; --ok: #11804a; --warn: #a85f00; --shadow: 0 10px 28px rgba(20, 30, 60, .14);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  padding-block: 20px 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 10px; }
+
+/* header */
+.top { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.mark {
+  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  background: radial-gradient(circle at 30% 28%, var(--accent) 0, var(--accent-2) 70%);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 55%, transparent);
+  position: relative;
+}
+.mark::after { content: ""; position: absolute; inset: 9px 9px 9px 12px; background: #fff; clip-path: polygon(0 0, 100% 50%, 0 100%); opacity: .95; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(22px, 6vw, 30px); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+.lede { margin: 0; color: var(--dim); max-width: 56ch; }
+
+/* connection status */
+.status { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.srow { display: flex; align-items: center; gap: 12px; min-height: 40px; }
+.srow .txt { flex: 1; min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.srow .txt small { display: block; font-weight: 400; color: var(--dim); font-size: 13px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--dim); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dim) 22%, transparent); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent); }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 25%, transparent); }
+.dot.bad { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 25%, transparent); }
+.connect { flex: none; min-height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-weight: 600; }
+.chip { position: absolute; top: 0; left: 0; display: flex; gap: 14px; align-items: center; padding: 14px max(16px, env(safe-area-inset-right, 0px)) 14px max(16px, env(safe-area-inset-left, 0px)); padding-top: calc(14px + env(safe-area-inset-top, 0px)); font-size: 14px; background: linear-gradient(to bottom, rgba(0, 0, 0, .75), transparent); transition: opacity .3s; pointer-events: none; }
+.chip span { display: inline-flex; align-items: center; gap: 8px; }
+.chip .dot { width: 10px; height: 10px; }
+.stage.idle .chip { opacity: 0; }
+
+/* picker */
+.drop {
+  display: flex; align-items: center; gap: 16px; cursor: pointer;
+  padding: 22px; border-radius: 20px; background: var(--surface);
+  border: 2px dashed color-mix(in srgb, var(--accent) 55%, var(--line));
+  transition: background .2s, border-color .2s;
+}
+.drop:hover, .drop.over, .picker:focus-within .drop { background: var(--surface-2); border-color: var(--accent); }
+.drop .ico { width: 52px; height: 52px; border-radius: 16px; flex: none; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.drop strong { display: block; font-size: 18px; }
+.drop span.sub { color: var(--dim); font-size: 14px; }
+
+/* playlist */
+.list-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.stats { font-family: var(--font-mono); font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.grid { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.thumb { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); display: grid; place-items: center; color: var(--dim); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.badge { position: absolute; top: 8px; left: 8px; background: rgba(0, 0, 0, .66); color: #fff; font-family: var(--font-mono); font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.warn { position: absolute; bottom: 8px; left: 8px; right: 8px; background: rgba(0, 0, 0, .75); color: #ffd2d2; font-size: 12px; padding: 4px 8px; border-radius: 8px; }
+.meta { padding: 10px 12px 4px; min-width: 0; }
+.name { font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.facts { font-family: var(--font-mono); font-size: 12px; color: var(--dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: 6px; padding: 8px 10px 10px; margin-top: auto; }
+.mini { flex: none; min-width: 44px; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); padding: 0 12px; }
+.mini:hover:not(:disabled) { border-color: var(--accent); }
+.mini:disabled { opacity: .35; cursor: default; }
+.mini.rm { margin-left: auto; color: var(--danger); }
+.empty { margin: 12px 0 0; padding: 22px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); color: var(--dim); }
+.empty b { color: var(--fg); font-weight: 600; }
+
+/* sticky play bar */
+.playbar {
+  position: sticky; bottom: 0; z-index: 5; margin: 0 calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+  padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+.playbar .inner { max-width: 760px; margin: 0 auto; }
+.play {
+  width: 100%; min-height: 60px; border: 0; border-radius: 18px; font-size: 18px; font-weight: 600; color: var(--accent-fg);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--accent) 38%, transparent);
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.play:disabled { background: var(--surface-2); color: var(--dim); box-shadow: none; cursor: default; }
+.play:active:not(:disabled) { transform: scale(.99); }
+
+/* panels */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.opt { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; }
+.opt .t { min-width: 0; }
+.opt .t b { display: block; font-weight: 500; }
+.opt .t small { color: var(--dim); font-size: 13px; }
+.switch { position: relative; flex: none; width: 56px; height: 32px; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; width: 100%; height: 100%; }
+.switch i { position: absolute; inset: 0; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); transition: background .2s; pointer-events: none; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--dim); transition: transform .2s, background .2s; }
+.switch input:checked + i { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + i::after { transform: translateX(24px); background: #fff; }
+.switch input:focus-visible + i { outline: 3px solid var(--accent); outline-offset: 3px; }
+select, input[type="range"] { min-height: 44px; }
+select { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; }
+input[type="range"] { width: min(46%, 220px); accent-color: var(--accent); }
+
+ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); }
+.note { margin: 0; color: var(--dim); font-size: 14px; }
+.foot { color: var(--dim); font-size: 13px; padding-bottom: 6px; }
+
+/* stage */
+.stage { position: fixed; inset: 0; z-index: 100; background: var(--stage-bg); color: var(--stage-fg); overflow: hidden; }
+.stage.idle { cursor: none; }
+.stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage-bg); opacity: 0; transition: opacity var(--fade, 1s) ease; }
+.stage video.on { opacity: 1; }
+.stage .dim { position: absolute; inset: 0; background: #000; pointer-events: none; opacity: 0; }
+.clock { position: absolute; font-family: var(--font-mono); font-size: clamp(22px, 5vw, 44px); font-weight: 500; letter-spacing: .02em; opacity: .75; text-shadow: 0 2px 14px rgba(0, 0, 0, .8); pointer-events: none; transition: opacity .6s; }
+.clock.c0 { left: 5%; bottom: 7%; } .clock.c1 { right: 5%; bottom: 7%; } .clock.c2 { right: 5%; top: 7%; } .clock.c3 { left: 5%; top: 7%; }
+.bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(to top, rgba(0, 0, 0, .8), transparent); transition: opacity .3s;
+}
+.stage.idle .bar { opacity: 0; pointer-events: none; }
+.bar button { min-height: 52px; padding: 0 20px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .12); color: var(--stage-fg); font-weight: 500; }
+.bar button.exit { background: #fff; color: #000; border-color: #fff; }
+.bar button:focus-visible { outline-color: #fff; }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 200; max-width: min(92vw, 520px); background: var(--fg); color: var(--bg); padding: 12px 16px; border-radius: 14px; font-size: 14px; box-shadow: var(--shadow); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 420px) { .drop { padding: 16px; } .opt { flex-wrap: wrap; } input[type="range"] { width: 100%; } }
+</style>
+<style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>Screensaver Loop</h1></div>
+    <p class="lede">Pick videos from your gallery and play them full screen as a looping screensaver. Mirror it to your TV over the same Wi-Fi.</p>
+  </header>
+
+  <section class="status" aria-label="Connection status" role="status" aria-live="polite">
+    <div class="srow"><span class="dot" id="netDot"></span><div class="txt" id="netText">Checking Wi-Fi…</div></div>
+    <div class="srow"><span class="dot" id="tvDot"></span><div class="txt"><span id="tvText">TV: not connected</span><small id="tvHint"></small></div><button class="connect" id="bConnect" type="button" hidden>Connect TV</button></div>
+  </section>
+
+  <section class="picker" aria-label="Choose videos">
+    <input id="file" class="sr" type="file" accept="video/*" multiple>
+    <label class="drop" id="drop" for="file">
+      <span class="ico" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9.5 5 2.5-5 2.5z" fill="currentColor"/><path d="M12 1.5v0"/></svg>
+      </span>
+      <span><strong>Choose videos from gallery</strong><span class="sub">Select one or many. They stay on this device.</span></span>
+    </label>
+  </section>
+
+  <section aria-label="Playlist">
+    <div class="list-head">
+      <h2>Playlist</h2>
+      <span class="stats" id="stats">0 videos</span>
+    </div>
+    <p class="note" id="persistNote" hidden>This browser cannot keep videos between visits. Pick them again next time.</p>
+    <div class="empty" id="empty"><b>No videos yet.</b> Tap “Choose videos from gallery”. Short, looping clips in 1080p or 4K look best on a TV.</div>
+    <ul class="grid" id="grid"></ul>
+  </section>
+
+  <section class="panel" aria-label="Options">
+    <h2>Options</h2>
+    <div class="opt"><div class="t"><b>Shuffle</b><small>Play the clips in random order</small></div><label class="switch"><span class="sr">Shuffle</span><input type="checkbox" id="oShuffle"><i></i></label></div>
+    <div class="opt"><div class="t"><b>Crossfade</b><small>Blend from one clip into the next</small></div>
+      <select id="oFade" aria-label="Crossfade length"><option value="0">Off</option><option value="1">1 second</option><option value="2">2 seconds</option><option value="4">4 seconds</option></select></div>
+    <div class="opt"><div class="t"><b>Clock</b><small>Small clock that moves to avoid screen burn-in</small></div><label class="switch"><span class="sr">Show clock</span><input type="checkbox" id="oClock"><i></i></label></div>
+    <div class="opt"><div class="t"><b>Sound</b><small>Off by default for a quiet screensaver</small></div><label class="switch"><span class="sr">Play sound</span><input type="checkbox" id="oSound"><i></i></label></div>
+    <div class="opt"><div class="t"><b>Dim</b><small>Darken the picture for the evening</small></div><input type="range" id="oDim" min="0" max="60" step="5" aria-label="Dim amount"></div>
+  </section>
+
+  <section class="panel" aria-label="Show it on your TV">
+    <h2>Show it on your TV</h2>
+    <ol class="steps">
+      <li>Connect your phone and the TV to the same Wi-Fi.</li>
+      <li>Choose your videos and tap <b>Play full screen</b>.</li>
+      <li>Open your phone’s quick settings, tap <b>Cast</b> or <b>Smart View</b>, and pick your TV. The TV mirrors the loop.</li>
+    </ol>
+    <p class="note">If your browser supports it, the <b>Cast to TV</b> button inside the player sends the current clip straight to the TV. Keep the phone plugged in while it mirrors. If the TV has its own web browser, you can also open this page there and pick videos on the TV.</p>
+  </section>
+
+  <p class="foot">Videos are read on your device and never uploaded.</p>
+  <div class="playbar"><div class="inner"><button class="play" id="play" disabled>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg><span id="playLabel">Play full screen</span></button></div></div>
+</div>
+
+<div class="stage idle" id="stage" hidden role="dialog" aria-label="Screensaver player">
+  <video id="vA" playsinline muted></video>
+  <video id="vB" playsinline muted></video>
+  <div class="dim" id="dimmer"></div>
+  <div class="chip" id="chip" aria-hidden="true"><span><i class="dot" id="cNetDot"></i><b id="cNet">Wi-Fi</b></span><span><i class="dot" id="cTvDot"></i><b id="cTv">TV</b></span></div>
+  <div class="clock c0" id="clock" aria-hidden="true"></div>
+  <div class="bar" id="bar">
+    <button class="exit" id="bExit">Exit</button>
+    <button id="bNext">Next video</button>
+    <button id="bSound">Sound: off</button>
+    <button id="bCast" hidden>Cast to TV</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    file: $('file'), drop: $('drop'), grid: $('grid'), empty: $('empty'), stats: $('stats'), play: $('play'), playLabel: $('playLabel'),
+    persistNote: $('persistNote'), stage: $('stage'), dimmer: $('dimmer'), clock: $('clock'), toast: $('toast'),
+    bExit: $('bExit'), bNext: $('bNext'), bSound: $('bSound'), bCast: $('bCast'),
+    netDot: $('netDot'), netText: $('netText'), tvDot: $('tvDot'), tvText: $('tvText'), tvHint: $('tvHint'), bConnect: $('bConnect'),
+    cNetDot: $('cNetDot'), cNet: $('cNet'), cTvDot: $('cTvDot'), cTv: $('cTv'),
+    oShuffle: $('oShuffle'), oFade: $('oFade'), oClock: $('oClock'), oSound: $('oSound'), oDim: $('oDim')
+  };
+  var V = [$('vA'), $('vB')];
+
+  /* ---------- settings (per device) ---------- */
+  var SKEY = 'screensaver-loop:v1';
+  var defaults = { shuffle: false, fade: 1, clock: true, sound: false, dim: 0 };
+  var settings = Object.assign({}, defaults);
+  try { var saved = JSON.parse(localStorage.getItem(SKEY) || 'null'); if (saved) settings = Object.assign({}, defaults, saved); } catch (e) {}
+  function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch (e) {} }
+  function syncOptions() {
+    els.oShuffle.checked = !!settings.shuffle; els.oFade.value = String(settings.fade);
+    els.oClock.checked = !!settings.clock; els.oSound.checked = !!settings.sound; els.oDim.value = String(settings.dim);
+  }
+  syncOptions();
+  els.oShuffle.onchange = function () { settings.shuffle = els.oShuffle.checked; saveSettings(); };
+  els.oFade.onchange = function () { settings.fade = Number(els.oFade.value); saveSettings(); };
+  els.oClock.onchange = function () { settings.clock = els.oClock.checked; saveSettings(); };
+  els.oSound.onchange = function () { settings.sound = els.oSound.checked; saveSettings(); };
+  els.oDim.oninput = function () { settings.dim = Number(els.oDim.value); saveSettings(); };
+
+  var running = false, cur = 0, pos = 0, order = [], fading = false, errs = 0;
+
+  /* ---------- helpers ---------- */
+  var toastTimer = null;
+  function toast(msg) {
+    els.toast.textContent = msg; els.toast.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { els.toast.hidden = true; }, 5000);
+  }
+  function fmtDur(s) {
+    if (!isFinite(s) || s <= 0) return '--:--';
+    s = Math.round(s); var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0') : m + ':' + String(r).padStart(2, '0');
+  }
+  function fmtSize(b) { return b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : (b / 1048576).toFixed(b >= 10485760 ? 0 : 1) + ' MB'; }
+  function fmtRes(w, h) { if (!w) return 'unknown size'; var m = Math.max(w, h); return (m >= 3800 ? '4K ' : m >= 1900 ? '1080p ' : m >= 1260 ? '720p ' : '') + w + '×' + h; }
+  function uid() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+  /* ---------- storage of the picked videos (IndexedDB, optional) ---------- */
+  var persistent = true, dbp = null;
+  function db() {
+    if (dbp) return dbp;
+    dbp = new Promise(function (res, rej) {
+      try {
+        var r = indexedDB.open('screensaver-loop', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('clips', { keyPath: 'id' }); };
+        r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+      } catch (e) { rej(e); }
+    });
+    return dbp;
+  }
+  function tx(mode, fn) {
+    return db().then(function (d) {
+      return new Promise(function (res, rej) {
+        var t = d.transaction('clips', mode), out = fn(t.objectStore('clips'));
+        t.oncomplete = function () { res(out && out.result); };
+        t.onerror = t.onabort = function () { rej(t.error); };
+      });
+    });
+  }
+  function noteStorageFailed() { persistent = false; els.persistNote.hidden = false; }
+  function record(it, pos) { return { id: it.id, name: it.name, size: it.size, type: it.type, blob: it.blob, w: it.w, h: it.h, dur: it.dur, thumb: it.thumb, bad: !!it.bad, pos: pos }; }
+  function persistOrder() { items.forEach(function (it, i) { tx('readwrite', function (st) { return st.put(record(it, i)); }).catch(noteStorageFailed); }); }
+
+  /* ---------- playlist ---------- */
+  var items = [];
+  function probe(url) {
+    return new Promise(function (resolve) {
+      var v = document.createElement('video'), done = false, meta = null, t;
+      v.muted = true; v.preload = 'metadata'; v.playsInline = true;
+      function finish(r) { if (done) return; done = true; clearTimeout(t); v.onerror = v.onloadedmetadata = v.onseeked = null; v.removeAttribute('src'); try { v.load(); } catch (e) {} resolve(r); }
+      t = setTimeout(function () { finish(meta || { bad: true }); }, 7000);
+      v.onerror = function () { finish({ bad: true }); };
+      v.onloadedmetadata = function () {
+        var w = v.videoWidth, h = v.videoHeight, dur = v.duration;
+        if (!w) { finish({ bad: true }); return; }
+        meta = { w: w, h: h, dur: dur, thumb: null };
+        v.onseeked = function () {
+          var thumb = null;
+          try { var c = document.createElement('canvas'); c.width = 320; c.height = Math.max(1, Math.round(320 * h / w)); c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); thumb = c.toDataURL('image/jpeg', 0.7); } catch (e) {}
+          finish({ w: w, h: h, dur: dur, thumb: thumb });
+        };
+        try { v.currentTime = Math.min(1, (isFinite(dur) ? dur : 2) / 2); } catch (e) { finish(meta); }
+      };
+      v.src = url;
+    });
+  }
+
+  function addFiles(fileList) {
+    var files = Array.prototype.filter.call(fileList || [], function (f) { return !f.type || f.type.indexOf('video/') === 0; });
+    if (!files.length) { toast('Those files are not videos. Choose video files from your gallery.'); return; }
+    var chain = Promise.resolve();
+    files.forEach(function (f) {
+      chain = chain.then(function () {
+        var url = URL.createObjectURL(f);
+        return probe(url).then(function (m) {
+          var it = { id: uid(), name: f.name || 'Video', size: f.size, type: f.type, blob: f, url: url, w: m.w, h: m.h, dur: m.dur, thumb: m.thumb || null, bad: !!m.bad };
+          items.push(it); render();
+          return tx('readwrite', function (st) { return st.put(record(it, items.length - 1)); }).catch(noteStorageFailed);
+        });
+      });
+    });
+    chain.then(function () {
+      var bad = items.filter(function (i) { return i.bad; }).length;
+      if (bad) toast(bad + ' video' + (bad > 1 ? 's' : '') + ' may not play in this browser. Try MP4 (H.264) or WebM.');
+    });
+  }
+
+  function removeItem(id) {
+    var i = items.findIndex(function (x) { return x.id === id; });
+    if (i < 0) return;
+    try { URL.revokeObjectURL(items[i].url); } catch (e) {}
+    items.splice(i, 1); render();
+    tx('readwrite', function (st) { return st.delete(id); }).catch(function () {});
+    persistOrder();
+  }
+  function moveItem(id, d) {
+    var i = items.findIndex(function (x) { return x.id === id; }), j = i + d;
+    if (i < 0 || j < 0 || j >= items.length) return;
+    var t = items[i]; items[i] = items[j]; items[j] = t; render(); persistOrder();
+  }
+
+  function btn(label, cls, aria, fn, disabled) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = label;
+    b.setAttribute('aria-label', aria); b.disabled = !!disabled; b.onclick = fn; return b;
+  }
+  function render() {
+    els.grid.textContent = '';
+    items.forEach(function (it, i) {
+      var li = document.createElement('li'); li.className = 'card';
+      var th = document.createElement('div'); th.className = 'thumb';
+      if (it.thumb) { var img = document.createElement('img'); img.alt = ''; img.src = it.thumb; th.appendChild(img); }
+      else { th.textContent = 'No preview'; }
+      var bd = document.createElement('span'); bd.className = 'badge'; bd.textContent = String(i + 1); th.appendChild(bd);
+      if (it.bad) { var w = document.createElement('span'); w.className = 'warn'; w.textContent = 'May not play in this browser'; th.appendChild(w); }
+      var meta = document.createElement('div'); meta.className = 'meta';
+      var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = it.name;
+      var fc = document.createElement('div'); fc.className = 'facts'; fc.textContent = fmtRes(it.w, it.h) + ' · ' + fmtDur(it.dur) + ' · ' + fmtSize(it.size);
+      meta.appendChild(nm); meta.appendChild(fc);
+      var ac = document.createElement('div'); ac.className = 'actions';
+      ac.appendChild(btn('↑', 'mini', 'Move ' + it.name + ' earlier', function () { moveItem(it.id, -1); }, i === 0));
+      ac.appendChild(btn('↓', 'mini', 'Move ' + it.name + ' later', function () { moveItem(it.id, 1); }, i === items.length - 1));
+      ac.appendChild(btn('Remove', 'mini rm', 'Remove ' + it.name, function () { removeItem(it.id); }));
+      li.appendChild(th); li.appendChild(meta); li.appendChild(ac); els.grid.appendChild(li);
+    });
+    var playable = items.filter(function (i) { return !i.bad; });
+    var total = playable.reduce(function (s, i) { return s + (isFinite(i.dur) ? i.dur : 0); }, 0);
+    var bytes = items.reduce(function (s, i) { return s + i.size; }, 0);
+    els.stats.textContent = items.length ? items.length + (items.length === 1 ? ' video · ' : ' videos · ') + fmtDur(total) + ' total · ' + fmtSize(bytes) : '0 videos';
+    els.empty.hidden = items.length > 0;
+    els.play.disabled = playable.length === 0;
+    els.playLabel.textContent = playable.length > 1 ? 'Play full screen · loop ' + playable.length + ' videos' : 'Play full screen';
+  }
+
+  els.file.onchange = function () { addFiles(els.file.files); els.file.value = ''; };
+  ['dragenter', 'dragover'].forEach(function (ev) { els.drop.addEventListener(ev, function (e) { e.preventDefault(); els.drop.classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { els.drop.addEventListener(ev, function (e) { e.preventDefault(); els.drop.classList.remove('over'); }); });
+  els.drop.addEventListener('drop', function (e) { if (e.dataTransfer) addFiles(e.dataTransfer.files); });
+
+  /* ---------- connection status ---------- */
+  var netState = { ok: navigator.onLine !== false, type: null };
+  var tvState = 'disconnected', castIdx = null;
+  var HINT_NO_DETECT = 'A web page can only see a TV connected with the Cast button. If you mirror from your phone’s Cast or Smart View and the TV shows your screen, it is working.';
+  function setDot(el, cls) { el.className = 'dot' + (cls ? ' ' + cls : ''); }
+  function netLabel() {
+    if (!netState.ok) return 'Offline. Connect to Wi-Fi';
+    if (netState.type === 'wifi') return 'Wi-Fi connected';
+    if (netState.type === 'cellular') return 'Mobile data. Switch to the same Wi-Fi as the TV';
+    if (netState.type === 'ethernet') return 'Network connected';
+    return 'Online';
+  }
+  function refreshNet() {
+    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    netState.ok = navigator.onLine !== false; netState.type = c && c.type ? c.type : null;
+    var cls = !netState.ok ? 'bad' : (netState.type === 'cellular' ? 'warn' : 'ok');
+    els.netText.textContent = netLabel(); setDot(els.netDot, cls);
+    setDot(els.cNetDot, cls); els.cNet.textContent = netState.ok ? (netState.type === 'cellular' ? 'Mobile data' : 'Wi-Fi OK') : 'Offline';
+  }
+  function refreshTv() {
+    var st = 'disconnected'; castIdx = null;
+    V.forEach(function (v, k) {
+      var s2 = v.remote && v.remote.state;
+      if (s2 === 'connected') { st = 'connected'; castIdx = k; }
+      else if (s2 === 'connecting' && st !== 'connected') { st = 'connecting'; castIdx = k; }
+    });
+    tvState = st;
+    var text = st === 'connected' ? 'TV: connected (Cast)' : st === 'connecting' ? 'TV: connecting…' : 'TV: not connected';
+    var cls = st === 'connected' ? 'ok' : st === 'connecting' ? 'warn' : 'bad';
+    els.tvText.textContent = text; setDot(els.tvDot, cls);
+    setDot(els.cTvDot, cls); els.cTv.textContent = st === 'connected' ? 'TV connected' : st === 'connecting' ? 'TV connecting…' : 'TV not detected';
+    els.tvHint.textContent = st === 'connected' ? 'Playing on your TV through Cast.' : HINT_NO_DETECT;
+    if (running && castIdx !== null) { cur = castIdx; V[cur].classList.add('on'); V[cur ^ 1].classList.remove('on'); }
+  }
+  var supportsRemote = 'remote' in HTMLMediaElement.prototype;
+  window.addEventListener('online', refreshNet); window.addEventListener('offline', refreshNet);
+  try { var nc = navigator.connection; if (nc && nc.addEventListener) nc.addEventListener('change', refreshNet); } catch (e) {}
+  if (supportsRemote) {
+    els.bConnect.hidden = false;
+    V.forEach(function (v) {
+      try { ['connecting', 'connect', 'disconnect'].forEach(function (ev) { v.remote.addEventListener(ev, refreshTv); }); } catch (e) {}
+    });
+  }
+  els.bConnect.onclick = function () {
+    var first = items.filter(function (i) { return !i.bad; })[0];
+    if (!first) { toast('Add a video first, then tap Connect TV.'); return; }
+    var v = V[0];
+    if (!v.getAttribute('src')) v.src = first.url;
+    try {
+      v.remote.prompt().catch(function () { toast('Could not connect from the browser. Use Cast or Smart View from your phone’s quick settings instead.'); });
+    } catch (e) { toast('Casting is not available here. Use Cast or Smart View from your phone’s quick settings.'); }
+  };
+  refreshNet(); refreshTv();
+  setInterval(refreshNet, 5000);
+
+  /* ---------- player ---------- */
+  var wake = null, barTimer = null, clockTimer = null, clockSlot = 0;
+
+  function itemAt(p) { var id = order[p]; for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i]; return null; }
+  function playSafe(v) {
+    var p = v.play();
+    if (p && p.catch) p.catch(function () { v.muted = true; var q = v.play(); if (q && q.catch) q.catch(function () {}); });
+  }
+  function applyAudio() { V.forEach(function (v) { v.muted = !settings.sound; }); els.bSound.textContent = 'Sound: ' + (settings.sound ? 'on' : 'off'); }
+
+  function advance() {
+    if (!running || fading || order.length < 2) return;
+    if (castIdx !== null) {
+      var cv = V[castIdx]; cur = castIdx; pos = (pos + 1) % order.length;
+      var cn = itemAt(pos); if (cn) { cv.src = cn.url; playSafe(cv); }
+      return;
+    }
+    fading = true;
+    var a = V[cur], b = V[cur ^ 1], np = (pos + 1) % order.length;
+    if (np === 0 && settings.shuffle) {
+      var last = order[pos]; shuffle(order);
+      if (order[0] === last) { var t = order[0]; order[0] = order[1]; order[1] = t; }
+    }
+    var next = itemAt(np); if (!next) { fading = false; return; }
+    b.muted = !settings.sound; b.src = next.url;
+    var go = function () {
+      b.removeEventListener('playing', go);
+      if (!running) return;
+      errs = 0; b.classList.add('on'); a.classList.remove('on');
+      cur ^= 1; pos = np; fading = false;
+      setTimeout(function () { if (!a.classList.contains('on')) { try { a.pause(); } catch (e) {} } }, settings.fade * 1000 + 200);
+    };
+    b.addEventListener('playing', go);
+    b.currentTime = 0; playSafe(b);
+  }
+
+  V.forEach(function (v, k) {
+    v.addEventListener('timeupdate', function () {
+      if (!running || k !== cur || fading || order.length < 2) return;
+      var rem = v.duration - v.currentTime;
+      if (isFinite(rem) && v.currentTime > 0.3 && rem <= settings.fade + 0.1) advance();
+    });
+    v.addEventListener('ended', function () { if (running && k === cur) advance(); });
+    v.addEventListener('error', function () {
+      if (!running || !v.getAttribute('src')) return;
+      errs++;
+      if (errs > Math.max(2, order.length * 2)) { stop(); toast('These videos cannot be played in this browser. Try MP4 (H.264) or WebM.'); return; }
+      if (fading && k === (cur ^ 1)) { fading = false; pos = (pos + 1) % order.length; advance(); }
+      else if (k === cur) { pos = (pos + 1) % order.length; var n = itemAt(pos); if (n) { v.src = n.url; playSafe(v); } }
+    });
+  });
+
+  function showBar() {
+    els.stage.classList.remove('idle'); clearTimeout(barTimer);
+    barTimer = setTimeout(function () { els.stage.classList.add('idle'); }, 3500);
+  }
+  function tickClock() {
+    els.clock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function moveClock() { clockSlot = (clockSlot + 1) % 4; els.clock.className = 'clock c' + clockSlot; }
+
+  function requestWake() {
+    try { if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (l) { wake = l; }).catch(function () {}); } catch (e) {}
+  }
+  function releaseWake() { try { if (wake) wake.release(); } catch (e) {} wake = null; }
+  document.addEventListener('visibilitychange', function () { if (running && document.visibilityState === 'visible') requestWake(); });
+
+  function start() {
+    order = items.filter(function (i) { return !i.bad; }).map(function (i) { return i.id; });
+    if (!order.length) return;
+    if (settings.shuffle) shuffle(order);
+    pos = 0; cur = 0; fading = false; errs = 0; running = true;
+    els.stage.style.setProperty('--fade', settings.fade + 's');
+    els.stage.hidden = false; els.dimmer.style.opacity = String(settings.dim / 100);
+    els.clock.hidden = !settings.clock; clockSlot = 0; els.clock.className = 'clock c0'; tickClock();
+    clockTimer = setInterval(function () { tickClock(); if (new Date().getSeconds() === 0) moveClock(); }, 1000);
+    els.bCast.hidden = !('remote' in HTMLMediaElement.prototype);
+    applyAudio();
+    V.forEach(function (v, k) { v.classList.toggle('on', k === 0); v.loop = order.length === 1; v.removeAttribute('src'); });
+    var first = itemAt(0); V[0].src = first.url; playSafe(V[0]);
+    try { var fs = els.stage.requestFullscreen && els.stage.requestFullscreen(); if (fs && fs.catch) fs.catch(function () {}); } catch (e) {}
+    requestWake(); showBar(); els.bExit.focus();
+  }
+  function stop() {
+    if (!running && els.stage.hidden) return;
+    running = false; fading = false; clearInterval(clockTimer); clearTimeout(barTimer);
+    V.forEach(function (v) { try { v.pause(); } catch (e) {} v.removeAttribute('src'); try { v.load(); } catch (e) {} v.classList.remove('on'); });
+    releaseWake();
+    els.stage.hidden = true;
+    if (document.fullscreenElement && document.exitFullscreen) { try { document.exitFullscreen().catch(function () {}); } catch (e) {} }
+    els.play.focus();
+  }
+
+  els.play.onclick = start;
+  els.bExit.onclick = stop;
+  els.bNext.onclick = function () { if (order.length < 2) { toast('Add more videos to skip between them.'); return; } advance(); };
+  els.bSound.onclick = function () { settings.sound = !settings.sound; els.oSound.checked = settings.sound; saveSettings(); applyAudio(); V.forEach(function (v) { if (settings.sound) playSafe(v); }); };
+  els.bCast.onclick = function () {
+    var v = V[cur];
+    try {
+      v.remote.prompt().catch(function () { toast('This browser cannot cast the file directly. Use Cast or Smart View from your phone’s quick settings to mirror the screen.'); });
+    } catch (e) { toast('Casting is not available here. Use Cast or Smart View from your phone’s quick settings.'); }
+  };
+  ['pointermove', 'pointerdown', 'touchstart'].forEach(function (ev) { els.stage.addEventListener(ev, function () { if (running) showBar(); }, { passive: true }); });
+  document.addEventListener('keydown', function (e) {
+    if (!running) return;
+    if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'BrowserBack' || e.key === 'GoBack') { e.preventDefault(); stop(); return; }
+    if (e.key === 'ArrowRight' || e.key === 'MediaTrackNext') { advance(); }
+    showBar();
+  });
+  document.addEventListener('fullscreenchange', function () { if (running && !document.fullscreenElement) stop(); });
+
+  /* ---------- restore previous picks ---------- */
+  render();
+  tx('readonly', function (st) { return st.getAll(); }).then(function (rows) {
+    (rows || []).sort(function (a, b) { return (a.pos || 0) - (b.pos || 0); }).forEach(function (r) {
+      items.push({ id: r.id, name: r.name, size: r.size, type: r.type, blob: r.blob, url: URL.createObjectURL(r.blob), w: r.w, h: r.h, dur: r.dur, thumb: r.thumb, bad: !!r.bad });
+    });
+    render();
+  }).catch(function () { /* storage unavailable: the page still works for this visit */ });
+})();
+</script>
+</body>
+</html>
