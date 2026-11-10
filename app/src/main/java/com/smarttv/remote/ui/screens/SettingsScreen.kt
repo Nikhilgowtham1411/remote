@@ -36,7 +36,9 @@ fun SettingsScreen(
     onChangeTvClick: () -> Unit,
     onReconnectClick: () -> Unit,
     onSkipSettingsClick: () -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    isConnected: Boolean = false,
+    connectionError: String? = null
 ) {
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
 
@@ -113,14 +115,14 @@ fun SettingsScreen(
 
                     Column {
                         Text(
-                            text = currentDevice?.name ?: "Lumio Vision 7",
+                            text = currentDevice?.name ?: "No TV selected",
                             color = TextPrimary,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${currentDevice?.model ?: "Google TV"} • ${currentDevice?.host ?: "192.168.1.105"}",
+                            text = "${currentDevice?.model ?: "Google TV"} • ${currentDevice?.host ?: "not paired"}",
                             color = TextSecondary,
                             fontSize = 12.sp
                         )
@@ -264,12 +266,15 @@ fun SettingsScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DiagnosticLine("Target Host", currentDevice?.host ?: "192.168.1.105")
-                    DiagnosticLine("Remote Port (TLS)", "${currentDevice?.port ?: 6466} [ACTIVE]")
-                    DiagnosticLine("Pairing Port (TLS)", "${currentDevice?.pairingPort ?: 6467} [READY]")
+                    DiagnosticLine("Target Host", currentDevice?.host ?: "not paired")
+                    DiagnosticLine("Remote Port (TLS)", "${currentDevice?.port ?: 6466}")
+                    DiagnosticLine("Pairing Port (TLS)", "${currentDevice?.pairingPort ?: 6467}")
+                    DiagnosticLine("Paired", if (currentDevice?.isPaired == true) "Yes" else "No")
+                    DiagnosticLine("Session", if (isConnected) "Connected" else "Offline")
                     DiagnosticLine("Protocol", "Google TV Remote v2")
-                    DiagnosticLine("Ping Latency", "4 ms (Local Wi-Fi)")
-                    DiagnosticLine("Certificates", "RSA 2048-bit (SHA256withRSA)")
+                    if (!isConnected && connectionError != null) {
+                        Text(text = connectionError, color = PowerRed, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {

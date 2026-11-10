@@ -1,5 +1,6 @@
 package com.smarttv.remote.data.protocol
 
+import java.net.InetSocketAddress
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.SecureRandom
@@ -12,14 +13,18 @@ import javax.net.ssl.X509TrustManager
 
 object TlsSocketFactory {
 
+    /**
+     * Opens a mutual-TLS connection to the TV. The TV uses a self-signed certificate, so the
+     * server certificate is accepted here and checked explicitly by the pairing secret instead.
+     */
     fun createSslSocket(
         host: String,
         port: Int,
         certificate: X509Certificate,
         privateKey: PrivateKey,
-        timeoutMs: Int = 5000
+        connectTimeoutMs: Int = 5000,
+        readTimeoutMs: Int = 10000
     ): SSLSocket {
-        // Create an in-memory KeyStore with the client certificate
         val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
             load(null, null)
             setKeyEntry(
@@ -34,7 +39,6 @@ object TlsSocketFactory {
             init(keyStore, "password".toCharArray())
         }
 
-        // Permissive TrustManager for TV self-signed certificate
         val trustAllCerts = arrayOf<TrustManager>(
             object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -48,9 +52,15 @@ object TlsSocketFactory {
         }
 
         val socket = sslContext.socketFactory.createSocket() as SSLSocket
-        socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
-        socket.soTimeout = 10000
-        socket.startHandshake()
+        try {
+            socket.tcpNoDelay = true
+            socket.connect(InetSocketAddress(host, port), connectTimeoutMs)
+            socket.soTimeout = readTimeoutMs
+            socket.startHandshake()
+        } catch (e: Exception) {
+            try { socket.close() } catch (_: Exception) {}
+            throw e
+        }
         return socket
     }
 }

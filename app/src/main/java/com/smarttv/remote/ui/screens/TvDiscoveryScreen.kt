@@ -32,7 +32,9 @@ fun TvDiscoveryScreen(
     isScanning: Boolean,
     onSelectDevice: (TvDevice) -> Unit,
     onRescanClick: () -> Unit,
-    onManualIpSubmit: (String) -> Unit
+    onManualIpSubmit: (String) -> Unit,
+    isBusy: Boolean = false,
+    errorMessage: String? = null
 ) {
     var showManualIpDialog by remember { mutableStateOf(false) }
     var manualIpText by remember { mutableStateOf("") }
@@ -64,13 +66,39 @@ fun TvDiscoveryScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "We found the following TVs\non your Wi-Fi network.",
+                text = if (devices.isNotEmpty()) "We found the following TVs\non your Wi-Fi network."
+                else if (isScanning) "Looking for TVs on your Wi-Fi...\nMake sure your TV is turned on."
+                else "No TV found.\nTurn your TV on, connect it to this Wi-Fi\nand tap Rescan.",
                 color = TextSecondary,
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
+
+            if (isBusy) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = NeonCyan, strokeWidth = 2.dp)
+                    Text(text = "Connecting to your TV...", color = TextSecondary, fontSize = 13.sp)
+                }
+            }
+
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = errorMessage,
+                    color = PowerRed,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            }
 
             Spacer(modifier = Modifier.height(28.dp))
 
@@ -80,13 +108,13 @@ fun TvDiscoveryScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 items(devices) { tv ->
-                    val isSelected = selectedDevice?.id == tv.id || (selectedDevice == null && tv.name.contains("Lumio", ignoreCase = true))
+                    val isSelected = selectedDevice?.host == tv.host
 
                     GlassCard(
                         modifier = Modifier.fillMaxWidth(),
                         isSelected = isSelected,
                         cornerRadius = 16.dp,
-                        onClick = { onSelectDevice(tv) }
+                        onClick = { if (!isBusy) onSelectDevice(tv) }
                     ) {
                         Row(
                             modifier = Modifier

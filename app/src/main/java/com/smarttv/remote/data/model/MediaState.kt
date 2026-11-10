@@ -1,11 +1,11 @@
 package com.smarttv.remote.data.model
 
 data class MediaState(
-    val title: String = "The Last of Us",
-    val subtitle: String = "S1 E3 · Long, Long Time",
+    val title: String = "Now Playing",
+    val subtitle: String = "Controls whatever is playing on your TV",
     val posterUrl: String = "",
-    val currentPositionSeconds: Long = 754, // 12:34
-    val totalDurationSeconds: Long = 3370,  // 56:10
+    val currentPositionSeconds: Long = 0,
+    val totalDurationSeconds: Long = 0,
     val isPlaying: Boolean = true
 ) {
     fun formatTime(seconds: Long): String {

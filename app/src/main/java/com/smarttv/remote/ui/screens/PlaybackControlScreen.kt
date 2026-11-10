@@ -128,7 +128,7 @@ fun PlaybackControlScreen(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "TLOU",
+                                text = "TV",
                                 color = Color.White,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -158,7 +158,7 @@ fun PlaybackControlScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // Progress Slider & Timestamps
-            Column(modifier = Modifier.fillMaxWidth()) {
+            if (mediaState.totalDurationSeconds > 0L) Column(modifier = Modifier.fillMaxWidth()) {
                 LinearProgressIndicator(
                     progress = { mediaState.progressFraction },
                     modifier = Modifier

@@ -14,15 +14,22 @@ import androidx.lifecycle.viewModelScope
 import com.smarttv.remote.data.local.RemotePreferences
 import com.smarttv.remote.data.model.*
 import com.smarttv.remote.data.protocol.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.math.max
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
 
 data class RemoteUiState(
     val connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
     val wifiConnected: Boolean = true,
-    val wifiSsid: String = "Home_WiFi_5G",
+    val wifiSsid: String = "Wi-Fi network",
     val discoveredDevices: List<TvDevice> = emptyList(),
     val isScanning: Boolean = false,
     val selectedDevice: TvDevice? = null,
@@ -38,7 +45,11 @@ data class RemoteUiState(
     val hapticEnabled: Boolean = true,
     val easyModeEnabled: Boolean = false,
     val isListeningVoice: Boolean = false,
-    val lastRecognizedVoice: String = ""
+    val lastRecognizedVoice: String = "",
+    val isBusy: Boolean = false,
+    val errorMessage: String? = null,
+    val userMessage: String? = null,
+    val savedDeviceLoaded: Boolean = false
 )
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
@@ -54,8 +65,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(RemoteUiState())
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
 
-    private var clientCert: X509Certificate? = null
-    private var clientKey: PrivateKey? = null
+    private val credentials = CompletableDeferred<Pair<X509Certificate, PrivateKey>>()
+    private val connectMutex = Mutex()
+    private var rediscoveryTried = false
 
     init {
         castManager.initialize()
@@ -65,6 +77,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         observeDiscovery()
         observeSession()
         setupVoiceListener()
+        loadSavedDeviceAndReconnect()
     }
 
     private fun checkWifiConnection() {
@@ -73,13 +86,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val caps = cm.getNetworkCapabilities(network)
         val isWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
 
-        var ssid = "Home_WiFi_5G"
+        var ssid = "Wi-Fi network"
         if (isWifi) {
-            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val info = wm.connectionInfo
-            val rawSsid = info.ssid?.replace("\"", "")
-            if (!rawSsid.isNullOrBlank() && rawSsid != "<unknown ssid>") {
-                ssid = rawSsid
+            try {
+                val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION")
+                val rawSsid = wm.connectionInfo?.ssid?.replace("\"", "")
+                if (!rawSsid.isNullOrBlank() && rawSsid != "<unknown ssid>") {
+                    ssid = rawSsid
+                }
+            } catch (_: Exception) {
             }
         }
 
@@ -87,38 +103,66 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun loadOrGenerateCertificates() {
-        viewModelScope.launch {
-            preferences.tlsCertFlow.collect { (certPem, keyPem) ->
-                if (certPem != null && keyPem != null) {
-                    try {
-                        clientCert = CertUtils.parseCertificatePem(certPem)
-                        clientKey = CertUtils.parsePrivateKeyPem(keyPem)
-                    } catch (_: Exception) {
-                        generateAndSaveCert()
-                    }
-                } else {
-                    generateAndSaveCert()
+        viewModelScope.launch(Dispatchers.Default) {
+            val (certPem, keyPem) = preferences.tlsCertFlow.first()
+            var pair: Pair<X509Certificate, PrivateKey>? = null
+            if (certPem != null && keyPem != null) {
+                pair = try {
+                    CertUtils.parseCertificatePem(certPem) to CertUtils.parsePrivateKeyPem(keyPem)
+                } catch (_: Exception) {
+                    null
                 }
+            }
+            if (pair == null) {
+                val generated = CertUtils.generateSelfSignedCertificate()
+                preferences.saveTlsCredentials(generated.certPem, generated.keyPem)
+                pair = generated.certificate to generated.privateKey
+            }
+            credentials.complete(pair)
+        }
+    }
+
+    /** On launch: if a TV was paired before, reconnect straight away - no code needed. */
+    private fun loadSavedDeviceAndReconnect() {
+        viewModelScope.launch {
+            val saved = preferences.pairedDeviceFlow.first()
+            if (saved != null) {
+                _uiState.update { it.copy(selectedDevice = saved, savedDeviceLoaded = true) }
+                connectSaved(saved)
+            } else {
+                _uiState.update { it.copy(savedDeviceLoaded = true) }
             }
         }
     }
 
-    private suspend fun generateAndSaveCert() {
-        val pair = CertUtils.generateSelfSignedCertificate()
-        clientCert = pair.certificate
-        clientKey = pair.privateKey
-        preferences.saveTlsCredentials(pair.certPem, pair.keyPem)
+    private suspend fun connectSaved(device: TvDevice) {
+        val (cert, key) = credentials.await()
+        _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTING, errorMessage = null) }
+        val result = connectMutex.withLock { remoteSession.connect(device, cert, key) }
+        when (result) {
+            is ConnectResult.Connected -> _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTED) }
+            is ConnectResult.Unreachable -> {
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.DISCONNECTED, errorMessage = result.message) }
+                // The TV may have a new IP address (DHCP): look for it by name once.
+                if (!rediscoveryTried) {
+                    rediscoveryTried = true
+                    nsdDiscovery.startDiscovery()
+                }
+            }
+            is ConnectResult.PairingRequired ->
+                _uiState.update {
+                    it.copy(
+                        connectionStatus = ConnectionStatus.DISCONNECTED,
+                        selectedDevice = it.selectedDevice?.copy(isPaired = false),
+                        errorMessage = result.message
+                    )
+                }
+            is ConnectResult.Failed ->
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.ERROR, errorMessage = result.message) }
+        }
     }
 
     private fun observePreferences() {
-        viewModelScope.launch {
-            preferences.pairedDeviceFlow.collect { paired ->
-                if (paired != null && _uiState.value.selectedDevice == null) {
-                    _uiState.update { it.copy(selectedDevice = paired) }
-                }
-            }
-        }
-
         viewModelScope.launch {
             preferences.skipDurationConfigFlow.collect { cfg ->
                 _uiState.update { it.copy(skipDurationConfig = cfg) }
@@ -141,17 +185,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun observeDiscovery() {
         viewModelScope.launch {
             nsdDiscovery.discoveredDevices.collect { list ->
-                val defaultList = if (list.isEmpty()) {
-                    // Provide the primary target TV for discovery reference
-                    listOf(
-                        TvDevice("lumio_1", "Lumio Vision 7", "Google TV", "192.168.1.105", 6466, 6467, isAvailable = true),
-                        TvDevice("bedroom_1", "Bedroom TV", "Google TV", "192.168.1.112", 6466, 6467, isAvailable = true),
-                        TvDevice("living_1", "Living Room TV", "Google TV", "192.168.1.120", 6466, 6467, isAvailable = true)
-                    )
-                } else {
-                    list
+                _uiState.update { it.copy(discoveredDevices = list) }
+
+                // Saved TV got a new IP address: follow it and reconnect.
+                val state = _uiState.value
+                val saved = state.selectedDevice
+                if (saved != null && saved.isPaired && state.connectionStatus != ConnectionStatus.CONNECTED) {
+                    val moved = list.firstOrNull { it.id == saved.id && it.host != saved.host }
+                    if (moved != null) {
+                        val updated = saved.copy(host = moved.host, port = moved.port, pairingPort = moved.pairingPort)
+                        preferences.savePairedDevice(updated)
+                        _uiState.update { it.copy(selectedDevice = updated) }
+                        connectSaved(updated)
+                    }
                 }
-                _uiState.update { it.copy(discoveredDevices = defaultList) }
             }
         }
 
@@ -166,9 +213,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             remoteSession.isConnected.collect { connected ->
                 _uiState.update {
-                    it.copy(
-                        connectionStatus = if (connected) ConnectionStatus.CONNECTED else ConnectionStatus.DISCONNECTED
-                    )
+                    val status = when {
+                        connected -> ConnectionStatus.CONNECTED
+                        it.connectionStatus == ConnectionStatus.CONNECTED -> ConnectionStatus.DISCONNECTED
+                        else -> it.connectionStatus
+                    }
+                    it.copy(connectionStatus = status)
                 }
             }
         }
@@ -189,6 +239,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startDiscovery() {
         checkWifiConnection()
+        _uiState.update { it.copy(errorMessage = null) }
         nsdDiscovery.startDiscovery()
     }
 
@@ -196,94 +247,160 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         nsdDiscovery.stopDiscovery()
     }
 
-    fun addManualIp(ip: String) {
-        val device = nsdDiscovery.addManualDevice(ip, "Lumio Vision 7")
-        selectDevice(device)
+    fun consumeUserMessage() {
+        _uiState.update { it.copy(userMessage = null) }
     }
 
-    fun selectDevice(device: TvDevice) {
-        _uiState.update { it.copy(selectedDevice = device) }
+    private fun toast(message: String) {
+        _uiState.update { it.copy(userMessage = message) }
     }
 
-    fun startPairing(onCodePrompt: () -> Unit) {
-        val device = _uiState.value.selectedDevice ?: return
-        val cert = clientCert ?: return
-        val key = clientKey ?: return
-
-        _uiState.update { it.copy(isPairingLoading = true, pairingError = null, pairingCode = "") }
-
+    /** User typed an IP: it is only accepted if a TV really answers on it. */
+    fun addManualIp(ip: String, onCodePrompt: () -> Unit, onConnected: () -> Unit) {
+        val clean = ip.trim()
+        if (!NsdDiscoveryManager.isValidIpv4(clean)) {
+            _uiState.update { it.copy(errorMessage = "That is not a valid IP address.") }
+            return
+        }
         viewModelScope.launch {
-            val result = pairingManager.startPairing(device.host, device.pairingPort, cert, key, "SmartTVRemote")
-            _uiState.update { it.copy(isPairingLoading = false) }
-            when (result) {
-                is PairingResult.CodeDisplayedOnTv -> {
-                    _uiState.update { it.copy(connectionStatus = ConnectionStatus.PAIRING_REQUIRED) }
-                    onCodePrompt()
+            _uiState.update { it.copy(isBusy = true, errorMessage = null) }
+            val reachable = nsdDiscovery.probe(clean)
+            if (!reachable) {
+                _uiState.update {
+                    it.copy(isBusy = false, errorMessage = "No Google TV answered at $clean. Check the IP, turn the TV on and use the same Wi-Fi.")
                 }
-                is PairingResult.Success -> {
-                    onPairingSuccess(device)
-                }
-                is PairingResult.Error -> {
-                    // For Lumio Vision 7 mock/test fallback, show pairing UI
-                    onCodePrompt()
-                }
+                return@launch
             }
+            val device = nsdDiscovery.manualDevice(clean)
+            connectToDevice(device, onCodePrompt, onConnected)
+        }
+    }
+
+    /**
+     * Tries a real connection first (works without any code if this phone was paired before).
+     * Only if the TV rejects us does it start pairing, which makes the TV show the code.
+     */
+    fun connectToDevice(device: TvDevice, onCodePrompt: () -> Unit, onConnected: () -> Unit) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    selectedDevice = device,
+                    isBusy = true,
+                    errorMessage = null,
+                    pairingError = null,
+                    pairingCode = "",
+                    connectionStatus = ConnectionStatus.CONNECTING
+                )
+            }
+            val (cert, key) = credentials.await()
+            val result = connectMutex.withLock { remoteSession.connect(device, cert, key) }
+            when (result) {
+                is ConnectResult.Connected -> {
+                    markPaired(device)
+                    _uiState.update { it.copy(isBusy = false, connectionStatus = ConnectionStatus.CONNECTED) }
+                    onConnected()
+                }
+                is ConnectResult.PairingRequired -> beginPairing(device, cert, key, onCodePrompt)
+                is ConnectResult.Unreachable ->
+                    _uiState.update {
+                        it.copy(isBusy = false, connectionStatus = ConnectionStatus.DISCONNECTED, errorMessage = result.message)
+                    }
+                is ConnectResult.Failed ->
+                    _uiState.update {
+                        it.copy(isBusy = false, connectionStatus = ConnectionStatus.ERROR, errorMessage = result.message)
+                    }
+            }
+        }
+    }
+
+    private suspend fun beginPairing(device: TvDevice, cert: X509Certificate, key: PrivateKey, onCodePrompt: () -> Unit) {
+        when (val r = pairingManager.startPairing(device.host, device.pairingPort, cert, key, "Smart TV Remote")) {
+            is PairingResult.CodeDisplayedOnTv -> {
+                _uiState.update { it.copy(isBusy = false, connectionStatus = ConnectionStatus.PAIRING_REQUIRED) }
+                onCodePrompt()
+            }
+            is PairingResult.Error ->
+                _uiState.update { it.copy(isBusy = false, connectionStatus = ConnectionStatus.DISCONNECTED, errorMessage = r.message) }
+            is PairingResult.Success -> _uiState.update { it.copy(isBusy = false) }
         }
     }
 
     fun updatePairingCode(code: String) {
-        if (code.length <= 4) {
-            _uiState.update { it.copy(pairingCode = code) }
+        val cleaned = code.uppercase().filter { it in '0'..'9' || it in 'A'..'F' }
+        if (cleaned.length <= 6) {
+            _uiState.update { it.copy(pairingCode = cleaned, pairingError = null) }
         }
+    }
+
+    fun cancelPairing() {
+        pairingManager.cancelPairing()
+        _uiState.update { it.copy(isPairingLoading = false, pairingError = null) }
     }
 
     fun submitPairingCode(onSuccess: () -> Unit) {
         val code = _uiState.value.pairingCode
-        if (code.length < 4) {
-            _uiState.update { it.copy(pairingError = "Please enter 4-digit code.") }
+        if (code.length < 6) {
+            _uiState.update { it.copy(pairingError = "Enter the 6 character code shown on your TV.") }
             return
         }
+        val device = _uiState.value.selectedDevice ?: return
 
         _uiState.update { it.copy(isPairingLoading = true, pairingError = null) }
 
         viewModelScope.launch {
-            val result = pairingManager.submitPairingCode(code)
-            _uiState.update { it.copy(isPairingLoading = false) }
-            when (result) {
+            when (val result = pairingManager.submitPairingCode(code)) {
                 is PairingResult.Success -> {
-                    val device = _uiState.value.selectedDevice ?: return@launch
-                    onPairingSuccess(device)
-                    onSuccess()
+                    val (cert, key) = credentials.await()
+                    // The TV needs a moment before it accepts the freshly paired certificate.
+                    var connected = false
+                    var lastError: String? = null
+                    for (attempt in 1..4) {
+                        delay(if (attempt == 1) 600L else 900L)
+                        val r = connectMutex.withLock { remoteSession.connect(device, cert, key) }
+                        if (r is ConnectResult.Connected) {
+                            connected = true
+                            break
+                        }
+                        lastError = when (r) {
+                            is ConnectResult.Unreachable -> r.message
+                            is ConnectResult.PairingRequired -> r.message
+                            is ConnectResult.Failed -> r.message
+                            else -> null
+                        }
+                    }
+                    if (connected) {
+                        markPaired(device)
+                        _uiState.update { it.copy(isPairingLoading = false, connectionStatus = ConnectionStatus.CONNECTED) }
+                        onSuccess()
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                isPairingLoading = false,
+                                pairingError = lastError ?: "Paired, but could not connect. Please try again."
+                            )
+                        }
+                    }
                 }
-                is PairingResult.Error -> {
-                    // If local socket cannot reach TV right now, gracefully accept and connect
-                    val device = _uiState.value.selectedDevice ?: return@launch
-                    onPairingSuccess(device)
-                    onSuccess()
-                }
-                else -> {}
+                is PairingResult.Error ->
+                    _uiState.update { it.copy(isPairingLoading = false, pairingError = result.message) }
+                else -> _uiState.update { it.copy(isPairingLoading = false) }
             }
         }
     }
 
-    private suspend fun onPairingSuccess(device: TvDevice) {
-        val paired = device.copy(isPaired = true)
+    private suspend fun markPaired(device: TvDevice) {
+        val paired = device.copy(isPaired = true, macAddress = device.macAddress ?: ArpTable.macFor(device.host))
         preferences.savePairedDevice(paired)
-        _uiState.update {
-            it.copy(
-                selectedDevice = paired,
-                connectionStatus = ConnectionStatus.CONNECTED
-            )
-        }
-        connectToRemoteSession(paired)
+        _uiState.update { it.copy(selectedDevice = paired) }
     }
 
     fun connectToRemoteSession(device: TvDevice) {
-        val cert = clientCert ?: return
-        val key = clientKey ?: return
-
         viewModelScope.launch {
-            remoteSession.connect(device, cert, key)
+            connectSaved(device)
+            val state = _uiState.value
+            if (state.connectionStatus != ConnectionStatus.CONNECTED) {
+                state.errorMessage?.let { toast(it) }
+            }
         }
     }
 
@@ -292,54 +409,127 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(connectionStatus = ConnectionStatus.DISCONNECTED) }
     }
 
+    /** Makes sure there is a live session; reconnects with the saved pairing if the link dropped. */
+    private suspend fun ensureConnected(): Boolean {
+        if (remoteSession.isConnected.value) return true
+        val device = _uiState.value.selectedDevice ?: return false
+        if (!device.isPaired) {
+            toast("Pair with your TV first.")
+            return false
+        }
+        val (cert, key) = credentials.await()
+        _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTING) }
+        val result = connectMutex.withLock {
+            if (remoteSession.isConnected.value) ConnectResult.Connected
+            else remoteSession.connect(device, cert, key)
+        }
+        return when (result) {
+            is ConnectResult.Connected -> {
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTED) }
+                true
+            }
+            is ConnectResult.Unreachable -> {
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.DISCONNECTED) }
+                toast(result.message)
+                false
+            }
+            is ConnectResult.PairingRequired -> {
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.DISCONNECTED) }
+                toast("The TV no longer trusts this phone. Choose your TV again to pair.")
+                false
+            }
+            is ConnectResult.Failed -> {
+                _uiState.update { it.copy(connectionStatus = ConnectionStatus.ERROR) }
+                toast(result.message)
+                false
+            }
+        }
+    }
+
     fun sendCommand(command: RemoteCommand) {
         triggerHaptic()
         viewModelScope.launch {
-            remoteSession.sendCommand(command)
+            if (!ensureConnected()) return@launch
+            if (!remoteSession.sendCommand(command)) {
+                toast("Command not sent. TV connection lost.")
+            }
         }
     }
 
     fun sendPower() {
         triggerHaptic()
-        val device = _uiState.value.selectedDevice
         viewModelScope.launch {
-            // Wake on LAN if device is asleep
-            device?.macAddress?.let { WakeOnLan.sendMagicPacket(it) }
-            remoteSession.sendCommand(RemoteCommand.POWER)
+            val device = _uiState.value.selectedDevice
+            if (device == null) {
+                toast("Choose a TV first.")
+                return@launch
+            }
+            // 1. TVs that keep their network on in standby accept the power key directly.
+            if (device.isPaired && withTimeoutQuiet { ensureConnectedSilently() }) {
+                remoteSession.sendCommand(RemoteCommand.POWER)
+                return@launch
+            }
+            // 2. Otherwise wake it with a Wake-on-LAN packet and reconnect.
+            val mac = device.macAddress
+            if (mac != null) {
+                toast("Waking the TV...")
+                WakeOnLan.sendMagicPacket(mac)
+                delay(4000)
+                if (ensureConnectedSilently()) {
+                    toast("TV is waking up.")
+                    return@launch
+                }
+            }
+            toast("Can't reach the TV. It may be fully powered off.")
         }
     }
 
+    private suspend fun withTimeoutQuiet(block: suspend () -> Boolean): Boolean =
+        try { block() } catch (_: Exception) { false }
+
+    private suspend fun ensureConnectedSilently(): Boolean {
+        if (remoteSession.isConnected.value) return true
+        val device = _uiState.value.selectedDevice ?: return false
+        val (cert, key) = credentials.await()
+        val r = connectMutex.withLock { remoteSession.connect(device, cert, key) }
+        if (r is ConnectResult.Connected) {
+            _uiState.update { it.copy(connectionStatus = ConnectionStatus.CONNECTED) }
+            return true
+        }
+        return false
+    }
+
+    // The TV does not report its playback position, so seeking sends rewind/forward keys.
+    // Most apps jump about 10 seconds per press, so longer skips repeat the key.
     fun sendSeekBackward() {
         triggerHaptic()
-        val seconds = _uiState.value.skipDurationConfig.backwardSeconds
-        val current = _uiState.value.mediaState.currentPositionSeconds
-        val newPos = (current - seconds).coerceAtLeast(0)
-        _uiState.update { it.copy(mediaState = it.mediaState.copy(currentPositionSeconds = newPos)) }
-        castManager.seek(newPos * 1000)
-        viewModelScope.launch {
-            remoteSession.sendCommand(RemoteCommand.MEDIA_REWIND)
-        }
+        val presses = max(1, _uiState.value.skipDurationConfig.backwardSeconds / 10)
+        repeatKey(RemoteCommand.MEDIA_REWIND, presses)
     }
 
     fun sendSeekForward() {
         triggerHaptic()
-        val seconds = _uiState.value.skipDurationConfig.forwardSeconds
-        val current = _uiState.value.mediaState.currentPositionSeconds
-        val total = _uiState.value.mediaState.totalDurationSeconds
-        val newPos = (current + seconds).coerceAtMost(total)
-        _uiState.update { it.copy(mediaState = it.mediaState.copy(currentPositionSeconds = newPos)) }
-        castManager.seek(newPos * 1000)
+        val presses = max(1, _uiState.value.skipDurationConfig.forwardSeconds / 10)
+        repeatKey(RemoteCommand.MEDIA_FAST_FORWARD, presses)
+    }
+
+    private fun repeatKey(command: RemoteCommand, times: Int) {
         viewModelScope.launch {
-            remoteSession.sendCommand(RemoteCommand.MEDIA_FAST_FORWARD)
+            if (!ensureConnected()) return@launch
+            repeat(times) {
+                remoteSession.sendCommand(command)
+                delay(120)
+            }
         }
     }
 
     fun togglePlayPause() {
         triggerHaptic()
-        val isPlaying = !_uiState.value.mediaState.isPlaying
-        _uiState.update { it.copy(mediaState = it.mediaState.copy(isPlaying = isPlaying)) }
-        if (isPlaying) castManager.play() else castManager.pause()
-        sendCommand(RemoteCommand.MEDIA_PLAY_PAUSE)
+        _uiState.update { it.copy(mediaState = it.mediaState.copy(isPlaying = !it.mediaState.isPlaying)) }
+        viewModelScope.launch {
+            if (!ensureConnected()) return@launch
+            remoteSession.sendCommand(RemoteCommand.MEDIA_PLAY_PAUSE)
+        }
     }
 
     fun updateSkipDurations(backward: Int, forward: Int, custom: Int) {
@@ -351,7 +541,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun launchApp(app: TvApp) {
         triggerHaptic()
         viewModelScope.launch {
-            remoteSession.launchApp(app.deepLinkUri)
+            if (!ensureConnected()) return@launch
+            val link = if (app.deepLinkUri.startsWith("http")) app.deepLinkUri else "market://launch?id=${app.packageName}"
+            if (!remoteSession.launchApp(link)) {
+                toast("Could not open ${app.name} on the TV.")
+            }
         }
     }
 
@@ -384,9 +578,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onKeyboardInput(char: String) {
         triggerHaptic()
-        val newText = _uiState.value.keyboardText + char
-        _uiState.update { it.copy(keyboardText = newText) }
+        _uiState.update { it.copy(keyboardText = it.keyboardText + char) }
         viewModelScope.launch {
+            if (!ensureConnected()) return@launch
             remoteSession.sendText(char)
         }
     }
@@ -396,21 +590,24 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val current = _uiState.value.keyboardText
         if (current.isNotEmpty()) {
             _uiState.update { it.copy(keyboardText = current.dropLast(1)) }
-            viewModelScope.launch {
-                remoteSession.sendCommand(RemoteCommand.BACK)
-            }
+        }
+        viewModelScope.launch {
+            if (!ensureConnected()) return@launch
+            remoteSession.sendBackspace()
         }
     }
 
     fun onKeyboardEnter() {
         triggerHaptic()
         viewModelScope.launch {
-            remoteSession.sendCommand(RemoteCommand.DPAD_CENTER)
+            if (!ensureConnected()) return@launch
+            remoteSession.sendEnter()
         }
     }
 
     fun sendKeyboardText(text: String) {
         viewModelScope.launch {
+            if (!ensureConnected()) return@launch
             remoteSession.sendText(text)
         }
     }
@@ -456,6 +653,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
         nsdDiscovery.stopDiscovery()
         remoteSession.disconnect()
+        pairingManager.cancelPairing()
         speechManager.stopListening()
     }
 }

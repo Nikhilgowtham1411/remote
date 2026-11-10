@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smarttv.remote.ui.theme.GlassBorder
 import com.smarttv.remote.ui.theme.NeonGreen
+import com.smarttv.remote.ui.theme.PowerRed
 import com.smarttv.remote.ui.theme.TextPrimary
 import com.smarttv.remote.ui.theme.TextSecondary
 
@@ -90,6 +91,26 @@ fun TvHeaderBar(
                     color = TextSecondary,
                     fontSize = 10.sp
                 )
+            }
+
+            if (!isConnected) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(PowerRed)
+                    )
+                    Text(
+                        text = "Offline",
+                        color = PowerRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
 
             // Green connected dot

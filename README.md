@@ -12,7 +12,7 @@
 - **Zero TV Installation**: No custom application, website, or server software is required on the TV. It communicates directly with Google TV's native system remote services.
 - **Wi-Fi Only**: No Infrared (IR) Blaster or Bluetooth required; all control is achieved over local Wi-Fi.
 - **Protocol**: Implements **Android TV Remote Protocol v2** over secure TLS on:
-  - **Port 6467**: Secure pairing handshake (X.509 certificates and 4-digit PIN verification).
+  - **Port 6467**: Secure pairing handshake (X.509 certificates and 6-character hex code verification).
   - **Port 6466**: Authenticated remote control session (key injection, text typing, app launching, keep-alive ping/pong).
 - **Google Cast SDK**: Native discovery and media casting for screen, video, photos, and music.
 - **Wake-on-LAN**: UDP magic packet support to power on compatible Google TVs from standby mode over the local subnet.
@@ -29,7 +29,7 @@ The UI directly recreates the 12 screens from the design reference with dark gla
 | **02** | **Welcome Screen** | Ambient TV graphic, key benefits (*Works over Wi-Fi*, *No TV app required*, *Easy & Big Buttons*, *For Everyone*), and primary gradient CTA (*Connect Your TV →*). |
 | **03** | **Wi-Fi Check** | Glowing Wi-Fi badge with green checkmark, auto-detected SSID (e.g. `Home_WiFi_5G`), connection status verification. |
 | **04** | **TV Discovery** | Real local network mDNS discovery (`_androidtvremote2._tcp` and `_googlecast._tcp`). Lists discovered TVs with model and IP. Includes *"Rescan"* and *"Enter IP Manually"* modal. |
-| **05** | **Pairing** | Google TV Remote v2 pairing flow: TV displays 4-digit code, 4 large input boxes, *"Pair & Connect"* button with SHA-256 secret verification. |
+| **05** | **Pairing** | Google TV Remote v2 pairing flow: TV displays a 6-character code, 6 input boxes, *"Pair & Connect"* button with SHA-256 secret verification. |
 | **06** | **Connection Success** | Vibrant glowing green checkmark, connected device card, *"Open Remote"* gradient CTA, and *"Change TV"* fallback. |
 | **07** | **Main Remote** | **Primary control screen**: Top TV status header, red Power button (Wake-on-LAN capable), Mute button, vertical Volume controller (`+`, `VOL`, `-`), circular D-PAD (`Up`, `Down`, `Left`, `Right`, `OK`), vertical Channel controller (`+`, `CH`, `-`), Back/Home/Recent Apps navigation, popular app shortcuts (Netflix, YouTube, JioHotstar, Prime Video), and glowing voice search button. |
 | **08** | **Playback Control** | Media details (*The Last of Us* poster, title, episode), dynamic progress scrubber (`12:34 / 56:10`), custom skip backward/forward buttons (e.g. `<< 10s` and `>> 10s`), play/pause, prev/stop/next, and quick link to skip duration settings. |
@@ -106,7 +106,7 @@ SmartTVRemote/
 │       │   │   │   ├── CastScreen.kt              # Screen 11: Cast to TV
 │       │   │   │   ├── ConnectionSuccessScreen.kt # Screen 06: Pairing Success
 │       │   │   │   ├── MainRemoteScreen.kt        # Screen 07: Main Remote
-│       │   │   │   ├── PairingScreen.kt           # Screen 05: 4-digit PIN Pairing
+│       │   │   │   ├── PairingScreen.kt           # Screen 05: 6-character code Pairing
 │       │   │   │   ├── PlaybackControlScreen.kt   # Screen 08: Media Playback
 │       │   │   │   ├── SetSkipDurationScreen.kt   # Screen 09: Skip Duration Settings
 │       │   │   │   ├── SettingsScreen.kt          # Screen 13: App Settings
@@ -176,7 +176,7 @@ The compiled APK will be generated at:
 2. **Launch Application**: Open **Smart TV Remote**. The splash screen will transition to the Welcome screen.
 3. **Verify Wi-Fi Status**: Tap *"Connect Your TV"*. Screen 03 will confirm your active Wi-Fi connection.
 4. **Select TV**: On Screen 04 (*Choose Your TV*), your Lumio Vision 7 TV will appear automatically via mDNS discovery. You can also tap *"Enter IP Manually"* if mDNS is restricted on your router.
-5. **Enter Pairing Code**: Tap on your TV. The TV screen will display a pairing code. Enter the 4 digits in Screen 05 and tap *"Pair & Connect"*.
+5. **Enter Pairing Code**: Tap on your TV. The TV screen will display a pairing code. Enter the 6-character code in Screen 05 and tap *"Pair & Connect"*.
 6. **Remote Control**: Upon success, Screen 07 opens. You can now:
    - Navigate menus using the circular D-PAD (`Up`, `Down`, `Left`, `Right`, `OK`).
    - Adjust volume and channels using the vertical controllers.

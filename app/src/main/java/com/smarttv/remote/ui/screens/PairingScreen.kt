@@ -19,6 +19,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,7 +113,7 @@ fun PairingScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (pairingCode.isNotEmpty()) pairingCode else "• • • •",
+                            text = if (pairingCode.isNotEmpty()) pairingCode else "• • • • • •",
                             color = NeonCyan,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
@@ -132,7 +133,7 @@ fun PairingScreen(
 
             // Instructions
             Text(
-                text = "Your TV will show a 4-digit code.\nEnter it below.",
+                text = "Your TV is showing a 6 character code.\nEnter it below (numbers 0-9, letters A-F).",
                 color = TextSecondary,
                 fontSize = 15.sp,
                 lineHeight = 22.sp,
@@ -143,16 +144,16 @@ fun PairingScreen(
 
             // 4 Large Square Input Boxes
             Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                for (i in 0 until 4) {
+                for (i in 0 until 6) {
                     val char = if (i < pairingCode.length) pairingCode[i].toString() else ""
                     val isCurrentFocus = i == pairingCode.length
 
                     Box(
                         modifier = Modifier
-                            .size(width = 62.dp, height = 70.dp)
+                            .size(width = 46.dp, height = 62.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(Color(0xFF131728))
                             .border(
@@ -179,14 +180,12 @@ fun PairingScreen(
             OutlinedTextField(
                 value = pairingCode,
                 onValueChange = {
-                    if (it.length <= 4 && it.all { c -> c.isDigit() }) {
-                        onCodeChange(it)
-                    }
+                    onCodeChange(it)
                 },
                 modifier = Modifier
                     .size(1.dp)
                     .focusRequester(focusRequester),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, capitalization = KeyboardCapitalization.Characters),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color.Transparent,
                     unfocusedBorderColor = Color.Transparent
@@ -220,7 +219,7 @@ fun PairingScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Can't see the code?\nCheck your TV (Settings → Remotes & Accessories → Pair Remote).",
+                text = "Can't see the code? Go back and select your TV again.\nThe TV must be on and showing the pairing screen.",
                 color = TextSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

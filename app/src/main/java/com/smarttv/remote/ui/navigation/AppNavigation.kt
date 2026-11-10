@@ -1,6 +1,9 @@
 package com.smarttv.remote.ui.navigation
 
+import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -34,6 +37,14 @@ fun AppNavigation(
     viewModel: RemoteViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    LaunchedEffect(uiState.userMessage) {
+        uiState.userMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.consumeUserMessage()
+        }
+    }
 
     NavHost(
         navController = navController,
@@ -43,7 +54,10 @@ fun AppNavigation(
         composable(Destinations.SPLASH) {
             SplashScreen(
                 onSplashFinished = {
-                    navController.navigate(Destinations.WELCOME) {
+                    // Read the latest state: a saved TV skips onboarding and reconnects by itself.
+                    val hasPairedTv = viewModel.uiState.value.selectedDevice?.isPaired == true
+                    val target = if (hasPairedTv) Destinations.MAIN_REMOTE else Destinations.WELCOME
+                    navController.navigate(target) {
                         popUpTo(Destinations.SPLASH) { inclusive = true }
                     }
                 }
@@ -73,27 +87,32 @@ fun AppNavigation(
 
         // SCREEN 04: TV DISCOVERY
         composable(Destinations.TV_DISCOVERY) {
+            LaunchedEffect(Unit) {
+                if (uiState.discoveredDevices.isEmpty() && !uiState.isScanning) {
+                    viewModel.startDiscovery()
+                }
+            }
             TvDiscoveryScreen(
                 devices = uiState.discoveredDevices,
                 selectedDevice = uiState.selectedDevice,
                 isScanning = uiState.isScanning,
+                isBusy = uiState.isBusy,
+                errorMessage = uiState.errorMessage,
                 onSelectDevice = { tv ->
-                    viewModel.selectDevice(tv)
-                    viewModel.startPairing(
-                        onCodePrompt = {
-                            navController.navigate(Destinations.PAIRING)
-                        }
+                    viewModel.connectToDevice(
+                        tv,
+                        onCodePrompt = { navController.navigate(Destinations.PAIRING) },
+                        onConnected = { navController.navigate(Destinations.CONNECTION_SUCCESS) }
                     )
                 },
                 onRescanClick = {
                     viewModel.startDiscovery()
                 },
                 onManualIpSubmit = { ip ->
-                    viewModel.addManualIp(ip)
-                    viewModel.startPairing(
-                        onCodePrompt = {
-                            navController.navigate(Destinations.PAIRING)
-                        }
+                    viewModel.addManualIp(
+                        ip,
+                        onCodePrompt = { navController.navigate(Destinations.PAIRING) },
+                        onConnected = { navController.navigate(Destinations.CONNECTION_SUCCESS) }
                     )
                 }
             )
@@ -102,7 +121,7 @@ fun AppNavigation(
         // SCREEN 05: PAIRING
         composable(Destinations.PAIRING) {
             PairingScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 pairingCode = uiState.pairingCode,
                 isLoading = uiState.isPairingLoading,
                 errorMessage = uiState.pairingError,
@@ -114,14 +133,17 @@ fun AppNavigation(
                         }
                     )
                 },
-                onBackClick = { navController.popBackStack() }
+                onBackClick = {
+                    viewModel.cancelPairing()
+                    navController.popBackStack()
+                }
             )
         }
 
         // SCREEN 06: CONNECTION SUCCESS
         composable(Destinations.CONNECTION_SUCCESS) {
             ConnectionSuccessScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 onOpenRemoteClick = {
                     navController.navigate(Destinations.MAIN_REMOTE) {
@@ -137,7 +159,7 @@ fun AppNavigation(
         // SCREEN 07: MAIN REMOTE
         composable(Destinations.MAIN_REMOTE) {
             MainRemoteScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
                 isListeningVoice = uiState.isListeningVoice,
@@ -158,7 +180,7 @@ fun AppNavigation(
         // SCREEN 08: PLAYBACK CONTROL
         composable(Destinations.PLAYBACK_CONTROL) {
             PlaybackControlScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
                 mediaState = uiState.mediaState,
@@ -190,7 +212,7 @@ fun AppNavigation(
         // SCREEN 10: TV APPS
         composable(Destinations.TV_APPS) {
             TvAppsScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
                 apps = viewModel.filteredApps,
@@ -208,7 +230,7 @@ fun AppNavigation(
         // SCREEN 11: CAST
         composable(Destinations.CAST) {
             CastScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
                 onCastScreenClick = {
@@ -244,7 +266,7 @@ fun AppNavigation(
         // SCREEN 12: KEYBOARD
         composable(Destinations.KEYBOARD) {
             TvKeyboardScreen(
-                tvName = uiState.selectedDevice?.name ?: "Lumio Vision 7",
+                tvName = uiState.selectedDevice?.name ?: "No TV selected",
                 tvModel = uiState.selectedDevice?.model ?: "Google TV",
                 isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
                 currentText = uiState.keyboardText,
@@ -272,7 +294,9 @@ fun AppNavigation(
                     uiState.selectedDevice?.let { viewModel.connectToRemoteSession(it) }
                 },
                 onSkipSettingsClick = { navController.navigate(Destinations.SKIP_DURATION) },
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStack() },
+                isConnected = uiState.connectionStatus == com.smarttv.remote.data.model.ConnectionStatus.CONNECTED,
+                connectionError = uiState.errorMessage
             )
         }
     }
