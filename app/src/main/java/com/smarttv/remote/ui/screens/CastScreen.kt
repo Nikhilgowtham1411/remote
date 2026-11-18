@@ -46,6 +46,10 @@ fun CastScreen(
     castConnected: Boolean,
     castDeviceName: String?,
     castStatus: String?,
+    castPlaying: Boolean,
+    castAvailable: Boolean,
+    onTogglePlay: () -> Unit,
+    onStopPlayback: () -> Unit,
     routes: List<CastManager.CastRoute>,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
@@ -110,7 +114,14 @@ fun CastScreen(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
 
-                if (routes.isEmpty()) {
+                if (!castAvailable) {
+                    Text(
+                        text = "Cast is not available on this phone (Google Play services is missing or out of date).",
+                        color = PowerRed,
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp
+                    )
+                } else if (routes.isEmpty()) {
                     Text(
                         text = "Looking for your TV...\nKeep the TV on and on the same Wi-Fi.",
                         color = TextSecondary,
@@ -180,6 +191,11 @@ fun CastScreen(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    CastControl(if (castPlaying) "Pause" else "Play", NeonBlue, Modifier.weight(1f), onTogglePlay)
+                    CastControl("Stop video", Color(0xFF1B2034), Modifier.weight(1f), onStopPlayback)
+                }
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
                     text = "Step 2: Choose what to show",
@@ -229,6 +245,20 @@ fun CastScreen(
             selectedTab = NavTab.CAST,
             onTabSelected = onNavigateTab
         )
+    }
+}
+
+@Composable
+private fun CastControl(label: String, background: Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .height(46.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(background)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

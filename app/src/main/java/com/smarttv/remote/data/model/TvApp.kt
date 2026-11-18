@@ -3,7 +3,7 @@ package com.smarttv.remote.data.model
 enum class AppCategory {
     ALL,
     STREAMING,
-    INSTALLED
+    OTHER
 }
 
 data class TvApp(
@@ -12,8 +12,7 @@ data class TvApp(
     val packageName: String,
     val deepLinkUri: String,
     val primaryColor: Long,
-    val category: AppCategory = AppCategory.STREAMING,
-    val isInstalled: Boolean = true
+    val category: AppCategory = AppCategory.STREAMING
 ) {
     companion object {
         val DEFAULT_APPS = listOf(
@@ -25,9 +24,8 @@ data class TvApp(
             TvApp("zee5", "ZEE5", "com.graymatrix.did", "zee5://", 0xFF6C2BD9, AppCategory.STREAMING),
             TvApp("aha", "aha", "aha.video.app", "aha://", 0xFFFF4500, AppCategory.STREAMING),
             TvApp("mxplayer", "MX Player", "com.mxtech.videoplayer.ad", "mxplayer://", 0xFF007AFF, AppCategory.STREAMING),
-            TvApp("jiocinema", "JioCinema", "com.jio.media.ondemand", "jiocinema://", 0xFFE91E63, AppCategory.STREAMING),
-            TvApp("spotify", "Spotify", "com.spotify.tv.android", "spotify://", 0xFF1DB954, AppCategory.INSTALLED),
-            TvApp("vlc", "VLC", "org.videolan.vlc", "vlc://", 0xFFFF7700, AppCategory.INSTALLED)
+            TvApp("spotify", "Spotify", "com.spotify.tv.android", "spotify://", 0xFF1DB954, AppCategory.OTHER),
+            TvApp("vlc", "VLC", "org.videolan.vlc", "vlc://", 0xFFFF7700, AppCategory.OTHER)
         )
     }
 }

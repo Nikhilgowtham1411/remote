@@ -48,9 +48,9 @@ class RemoteSessionManager {
     companion object {
         private const val TAG = "RemoteSession"
 
-        // PING(1) | KEY(2) | POWER(32) | VOLUME(64) | APP_LINK(512). The reply to the TV must be
-        // limited to what the TV itself advertises, otherwise newer TVs silently ignore keys.
-        private const val WANTED_FEATURES = 1 or 2 or 32 or 64 or 512
+        // KEY(2) | IME(4) | 8 | 16 | POWER(32) | VOLUME(64) | APP_LINK(512) = 622, the value known
+        // to work with Google TV. The reply is limited to what the TV itself advertises.
+        private const val WANTED_FEATURES = 2 or 4 or 8 or 16 or 32 or 64 or 512
 
         private const val DIRECTION_START_LONG = 1
         private const val DIRECTION_END_LONG = 2

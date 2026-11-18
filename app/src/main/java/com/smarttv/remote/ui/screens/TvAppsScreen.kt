@@ -103,7 +103,7 @@ fun TvAppsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Filter Chips: All Apps | Streaming | Installed
+            // Filter Chips: All Apps | Streaming | Other
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -121,9 +121,9 @@ fun TvAppsScreen(
                 )
 
                 FilterChipPill(
-                    label = "Installed",
-                    isSelected = selectedFilter == AppCategory.INSTALLED,
-                    onClick = { onFilterChange(AppCategory.INSTALLED) }
+                    label = "Other",
+                    isSelected = selectedFilter == AppCategory.OTHER,
+                    onClick = { onFilterChange(AppCategory.OTHER) }
                 )
             }
 

@@ -69,14 +69,24 @@ class LocalMediaServer(private val context: Context) {
         }
     }
 
+    /** The phone's Wi-Fi IPv4 address, the one the TV can reach. */
     private fun hostAddress(): String? {
+        try {
+            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val net = cm?.activeNetwork
+            val lp = if (net != null) cm.getLinkProperties(net) else null
+            val active = lp?.linkAddresses?.map { it.address }?.filterIsInstance<java.net.Inet4Address>()
+                ?.firstOrNull { it.isSiteLocalAddress }?.hostAddress
+            if (active != null) return active
+        } catch (_: Exception) {
+        }
         return try {
-            java.net.NetworkInterface.getNetworkInterfaces().toList()
+            val addrs = java.net.NetworkInterface.getNetworkInterfaces().toList()
                 .filter { it.isUp && !it.isLoopback }
+                .sortedBy { if (it.name.startsWith("wlan")) 0 else 1 }
                 .flatMap { it.inetAddresses.toList() }
                 .filterIsInstance<java.net.Inet4Address>()
-                .firstOrNull { it.isSiteLocalAddress }
-                ?.hostAddress
+            addrs.firstOrNull { it.isSiteLocalAddress }?.hostAddress
         } catch (e: Exception) {
             null
         }

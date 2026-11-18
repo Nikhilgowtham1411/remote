@@ -25,6 +25,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -64,6 +65,8 @@ data class RemoteUiState(
     val castConnected: Boolean = false,
     val castDeviceName: String? = null,
     val castStatus: String? = null,
+    val castPlaying: Boolean = false,
+    val castAvailable: Boolean = true,
     val castRoutes: List<CastManager.CastRoute> = emptyList()
 )
 
@@ -86,6 +89,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         castManager.initialize()
+        _uiState.update { it.copy(castAvailable = castManager.castAvailable) }
         checkWifiConnection()
         loadOrGenerateCertificates()
         observePreferences()
@@ -116,6 +120,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch {
             castManager.castDeviceName.collect { n -> _uiState.update { it.copy(castDeviceName = n) } }
+        }
+        viewModelScope.launch {
+            castManager.isPlaying.collect { p -> _uiState.update { it.copy(castPlaying = p) } }
         }
         viewModelScope.launch {
             castManager.castStatus.collect { st -> _uiState.update { it.copy(castStatus = st) } }
@@ -186,6 +193,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun stopCastScan() = castManager.stopScan()
     fun selectCastRoute(id: String) = castManager.selectRoute(id)
     fun stopCast() = castManager.disconnect()
+    fun toggleCastPlayback() = castManager.togglePlayPause()
+    fun stopCastPlayback() = castManager.stopPlayback()
 
     fun castFile(uri: Uri, fallbackMime: String) {
         val mime = context.contentResolver.getType(uri) ?: fallbackMime
@@ -360,8 +369,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 is VoiceAction.Command -> sendCommand(action.command)
                 is VoiceAction.LaunchApp -> launchAppByName(action.appName)
                 is VoiceAction.SearchQuery -> {
-                    _uiState.update { it.copy(keyboardText = action.query) }
-                    sendKeyboardText(action.query)
+                    onKeyboardTextChange(action.query)
                 }
             }
         }
@@ -675,10 +683,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         triggerHaptic()
         viewModelScope.launch {
             if (!ensureConnected()) return@launch
-            if (!remoteSession.launchApp("market://launch?id=${app.packageName}")) {
-                toast("Could not open ${app.name} on the TV.")
-            }
+            if (launchAndVerify("market://launch?id=${app.packageName}", app.packageName)) return@launch
+            if (launchAndVerify(app.deepLinkUri, app.packageName)) return@launch
+            toast("${app.name} did not open. Is it installed on the TV?")
         }
+    }
+
+    /** Sends an app link, then waits briefly for the TV to report the app as the foreground app. */
+    private suspend fun launchAndVerify(link: String, pkg: String): Boolean {
+        if (remoteSession.currentApp.value == pkg) return true
+        if (!remoteSession.launchApp(link)) return false
+        return kotlinx.coroutines.withTimeoutOrNull(3500) {
+            remoteSession.currentApp.first { it == pkg }
+            true
+        } ?: false
     }
 
     fun launchAppByName(name: String) {
@@ -701,47 +719,50 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val matchesCategory = when (state.appFilter) {
                     AppCategory.ALL -> true
                     AppCategory.STREAMING -> app.category == AppCategory.STREAMING
-                    AppCategory.INSTALLED -> app.category == AppCategory.INSTALLED || app.isInstalled
+                    AppCategory.OTHER -> app.category == AppCategory.OTHER
                 }
                 val matchesSearch = state.searchQuery.isBlank() || app.name.contains(state.searchQuery, ignoreCase = true)
                 matchesCategory && matchesSearch
             }
         }
 
-    fun onKeyboardInput(char: String) {
-        triggerHaptic()
-        _uiState.update { it.copy(keyboardText = it.keyboardText + char) }
-        viewModelScope.launch {
-            if (!ensureConnected()) return@launch
-            remoteSession.sendText(char)
+    private val keyboardQueue = kotlinx.coroutines.channels.Channel<suspend () -> Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+    init {
+        viewModelScope.launch { for (job in keyboardQueue) job() }
+    }
+
+    /** Phone text box changed: send only the difference to the TV (typed chars or backspaces). */
+    fun onKeyboardTextChange(new: String) {
+        val old = _uiState.value.keyboardText
+        var p = 0
+        while (p < old.length && p < new.length && old[p] == new[p]) p++
+        val deletions = old.length - p
+        val additions = new.substring(p)
+        _uiState.update { it.copy(keyboardText = new) }
+        keyboardQueue.trySend {
+            if (ensureConnected()) {
+                repeat(deletions) { remoteSession.sendBackspace() }
+                if (additions.isNotEmpty()) remoteSession.sendText(additions)
+            }
         }
     }
 
     fun onKeyboardBackspace() {
         triggerHaptic()
-        val current = _uiState.value.keyboardText
-        if (current.isNotEmpty()) {
-            _uiState.update { it.copy(keyboardText = current.dropLast(1)) }
-        }
-        viewModelScope.launch {
-            if (!ensureConnected()) return@launch
-            remoteSession.sendBackspace()
-        }
+        val cur = _uiState.value.keyboardText
+        if (cur.isNotEmpty()) onKeyboardTextChange(cur.dropLast(1))
+        else keyboardQueue.trySend { if (ensureConnected()) remoteSession.sendBackspace() }
+    }
+
+    fun onKeyboardClear() {
+        triggerHaptic()
+        onKeyboardTextChange("")
     }
 
     fun onKeyboardEnter() {
         triggerHaptic()
-        viewModelScope.launch {
-            if (!ensureConnected()) return@launch
-            remoteSession.sendEnter()
-        }
-    }
-
-    fun sendKeyboardText(text: String) {
-        viewModelScope.launch {
-            if (!ensureConnected()) return@launch
-            remoteSession.sendText(text)
-        }
+        keyboardQueue.trySend { if (ensureConnected()) remoteSession.sendEnter() }
     }
 
     fun toggleVoiceListening() {

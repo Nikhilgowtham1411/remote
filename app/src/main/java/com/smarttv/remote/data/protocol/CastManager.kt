@@ -28,9 +28,11 @@ class CastManager(private val context: Context) {
     data class CastRoute(val id: String, val name: String, val description: String?)
 
     private val mediaRouter: MediaRouter? = try { MediaRouter.getInstance(context) } catch (e: Exception) { null }
-    private val selector = MediaRouteSelector.Builder()
+    private val fallbackSelector = MediaRouteSelector.Builder()
         .addControlCategory(CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
         .build()
+    private val selector: MediaRouteSelector
+        get() = castContext?.mergedSelector ?: fallbackSelector
     private val routeCallback = object : MediaRouter.Callback() {
         override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
         override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) = refreshRoutes()
@@ -42,6 +44,24 @@ class CastManager(private val context: Context) {
     private val _routes = MutableStateFlow<List<CastRoute>>(emptyList())
     val routes: StateFlow<List<CastRoute>> = _routes.asStateFlow()
 
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    /** False when Google Play services / Cast is missing on this phone. */
+    val castAvailable: Boolean get() = castContext != null
+
+    private val clientCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            val status = currentCastSession?.remoteMediaClient?.mediaStatus ?: return
+            _isPlaying.value = status.playerState == com.google.android.gms.cast.MediaStatus.PLAYER_STATE_PLAYING
+            if (status.playerState == com.google.android.gms.cast.MediaStatus.PLAYER_STATE_IDLE &&
+                status.idleReason == com.google.android.gms.cast.MediaStatus.IDLE_REASON_ERROR
+            ) {
+                _castStatus.value = "The TV could not play this file. Try an MP4 (H.264) video, JPG photo or MP3 song."
+            }
+        }
+    }
+
     private val _castStatus = MutableStateFlow<String?>(null)
     val castStatus: StateFlow<String?> = _castStatus.asStateFlow()
 
@@ -49,7 +69,11 @@ class CastManager(private val context: Context) {
     fun startScan() {
         val router = mediaRouter ?: return
         if (!scanning) {
-            router.addCallback(selector, routeCallback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+            router.addCallback(
+                selector,
+                routeCallback,
+                MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY or MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN
+            )
             scanning = true
         }
         refreshRoutes()
@@ -80,8 +104,7 @@ class CastManager(private val context: Context) {
 
     /** Serves a file from this phone and plays it on the TV. Returns an error text or null. */
     fun castLocalFile(uri: Uri, mimeType: String): String? {
-        val client = currentCastSession?.remoteMediaClient
-            ?: return "Choose your TV first."
+        if (currentCastSession?.remoteMediaClient == null) return "Choose your TV first."
         val url = try {
             mediaServer.serve(uri, mimeType)
         } catch (e: Exception) {
@@ -105,13 +128,14 @@ class CastManager(private val context: Context) {
         override fun onSessionStarting(session: CastSession) {}
         override fun onSessionStarted(session: CastSession, sessionId: String) {
             currentCastSession = session
+            attachClient(session)
             _isCastConnected.value = true
             _castDeviceName.value = session.castDevice?.friendlyName ?: "Google Cast Receiver"
             _castStatus.value = "Connected to ${_castDeviceName.value}"
             Log.d(TAG, "Cast session started with ${session.castDevice?.friendlyName}")
         }
         override fun onSessionStartFailed(session: CastSession, error: Int) {
-            _castStatus.value = "Could not connect to the TV for casting."
+            _castStatus.value = "Could not connect to the TV for casting. Check both are on the same Wi-Fi."
             currentCastSession = null
             _isCastConnected.value = false
             _castDeviceName.value = null
@@ -125,6 +149,7 @@ class CastManager(private val context: Context) {
         override fun onSessionResuming(session: CastSession, sessionId: String) {}
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
             currentCastSession = session
+            attachClient(session)
             _isCastConnected.value = true
             _castDeviceName.value = session.castDevice?.friendlyName
         }
@@ -133,6 +158,24 @@ class CastManager(private val context: Context) {
             _isCastConnected.value = false
         }
         override fun onSessionSuspended(session: CastSession, reason: Int) {}
+    }
+
+    private fun attachClient(session: CastSession) {
+        try {
+            session.remoteMediaClient?.unregisterCallback(clientCallback)
+            session.remoteMediaClient?.registerCallback(clientCallback)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun togglePlayPause() {
+        val c = currentCastSession?.remoteMediaClient ?: return
+        if (c.isPlaying) c.pause() else c.play()
+    }
+
+    fun stopPlayback() {
+        currentCastSession?.remoteMediaClient?.stop()
+        _isPlaying.value = false
     }
 
     fun initialize() {
