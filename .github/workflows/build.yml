@@ -38,7 +38,8 @@ jobs:
 
       - name: Show compile errors
         if: failure()
-        run: grep -E '^e: ' build.log | head -30 | sed 's/^/::error::/' || true
+        run: |
+          grep -E '^e: ' build.log | head -30 | sed 's/^/::error::/' || true
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
