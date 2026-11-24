@@ -66,6 +66,8 @@ data class RemoteUiState(
     val castDeviceName: String? = null,
     val castStatus: String? = null,
     val castPlaying: Boolean = false,
+    val tvTextFieldActive: Boolean = false,
+    val mirroring: Boolean = false,
     val castAvailable: Boolean = true,
     val castRoutes: List<CastManager.CastRoute> = emptyList()
 )
@@ -112,6 +114,25 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun observeCast() {
+        viewModelScope.launch {
+            remoteSession.textFieldActive.collect { a -> _uiState.update { it.copy(tvTextFieldActive = a) } }
+        }
+        viewModelScope.launch {
+            com.smarttv.remote.data.protocol.MirrorHub.url.collect { u ->
+                if (u != null) {
+                    castManager.castMedia(u, "Phone screen", mimeType = "application/x-mpegURL", live = true)
+                    _uiState.update { it.copy(mirroring = true) }
+                }
+            }
+        }
+        viewModelScope.launch {
+            com.smarttv.remote.data.protocol.MirrorHub.error.collect { e ->
+                if (e != null) {
+                    _uiState.update { it.copy(mirroring = false) }
+                    toast(e)
+                }
+            }
+        }
         viewModelScope.launch {
             castManager.routes.collect { r -> _uiState.update { it.copy(castRoutes = r) } }
         }
@@ -192,9 +213,31 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun startCastScan() = castManager.startScan()
     fun stopCastScan() = castManager.stopScan()
     fun selectCastRoute(id: String) = castManager.selectRoute(id)
-    fun stopCast() = castManager.disconnect()
+    fun stopCast() {
+        stopMirror()
+        castManager.disconnect()
+    }
+
+    fun startMirror(resultCode: Int, data: Intent) {
+        if (!_uiState.value.castConnected) {
+            toast("Choose your TV first.")
+            return
+        }
+        val i = Intent(context, com.smarttv.remote.data.protocol.ScreenMirrorService::class.java)
+            .putExtra("code", resultCode)
+            .putExtra("data", data)
+        androidx.core.content.ContextCompat.startForegroundService(context, i)
+    }
+
+    fun stopMirror() {
+        context.stopService(Intent(context, com.smarttv.remote.data.protocol.ScreenMirrorService::class.java))
+        _uiState.update { it.copy(mirroring = false) }
+    }
     fun toggleCastPlayback() = castManager.togglePlayPause()
-    fun stopCastPlayback() = castManager.stopPlayback()
+    fun stopCastPlayback() {
+        stopMirror()
+        castManager.stopPlayback()
+    }
 
     fun castFile(uri: Uri, fallbackMime: String) {
         val mime = context.contentResolver.getType(uri) ?: fallbackMime
@@ -742,8 +785,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(keyboardText = new) }
         keyboardQueue.trySend {
             if (ensureConnected()) {
-                repeat(deletions) { remoteSession.sendBackspace() }
-                if (additions.isNotEmpty()) remoteSession.sendText(additions)
+                // Best: replace the TV text box content directly. Fallback: type key by key.
+                val done = remoteSession.textFieldActive.value && remoteSession.sendImeText(new)
+                if (!done) {
+                    repeat(deletions) { remoteSession.sendBackspace() }
+                    if (additions.isNotEmpty()) remoteSession.sendText(additions)
+                }
             }
         }
     }

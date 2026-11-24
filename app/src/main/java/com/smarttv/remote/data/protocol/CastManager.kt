@@ -135,7 +135,8 @@ class CastManager(private val context: Context) {
             Log.d(TAG, "Cast session started with ${session.castDevice?.friendlyName}")
         }
         override fun onSessionStartFailed(session: CastSession, error: Int) {
-            _castStatus.value = "Could not connect to the TV for casting. Check both are on the same Wi-Fi."
+            _castStatus.value = "Could not connect to the TV for casting (code $error: " +
+                "${com.google.android.gms.cast.CastStatusCodes.getStatusCodeString(error)}). Check both are on the same Wi-Fi."
             currentCastSession = null
             _isCastConnected.value = false
             _castDeviceName.value = null
@@ -195,7 +196,8 @@ class CastManager(private val context: Context) {
         title: String,
         subtitle: String = "",
         mimeType: String = "video/mp4",
-        imageUrl: String? = null
+        imageUrl: String? = null,
+        live: Boolean = false
     ) {
         val remoteMediaClient = currentCastSession?.remoteMediaClient ?: return
 
@@ -210,7 +212,7 @@ class CastManager(private val context: Context) {
         }
 
         val mediaInfo = MediaInfo.Builder(url)
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(mimeType)
             .setMetadata(metadata)
             .build()

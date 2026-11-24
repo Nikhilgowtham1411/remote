@@ -50,6 +50,8 @@ fun CastScreen(
     castAvailable: Boolean,
     onTogglePlay: () -> Unit,
     onStopPlayback: () -> Unit,
+    mirroring: Boolean,
+    onStartMirror: (Int, android.content.Intent) -> Unit,
     routes: List<CastManager.CastRoute>,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
@@ -72,6 +74,12 @@ fun CastScreen(
     }
     val musicPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) onCastFile(uri, "audio/mpeg")
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val mirrorLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) onStartMirror(result.resultCode, data)
     }
 
     Column(
@@ -233,9 +241,16 @@ fun CastScreen(
             CastActionCard(
                 icon = Icons.Default.ScreenShare,
                 title = "Cast Screen",
-                subtitle = "Mirror your phone (opens phone's Cast setting)",
-                isSelected = false,
-                onClick = onCastScreenClick
+                subtitle = if (mirroring) "Mirroring now. Tap Stop video to end." else "Show your phone screen on the TV (no sound)",
+                isSelected = mirroring,
+                onClick = {
+                    if (castConnected) {
+                        val mpm = context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+                        mirrorLauncher.launch(mpm.createScreenCaptureIntent())
+                    } else {
+                        onCastScreenClick()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(24.dp))

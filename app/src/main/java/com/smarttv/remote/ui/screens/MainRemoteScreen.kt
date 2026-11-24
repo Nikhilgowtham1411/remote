@@ -13,6 +13,10 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +46,7 @@ fun MainRemoteScreen(
     onNavigateTab: (NavTab) -> Unit,
     onPlaybackClick: () -> Unit
 ) {
+    var showKeypad by remember { mutableStateOf(false) }
     val dpadSize = if (easyMode) 210.dp else 185.dp
     val sliderHeight = if (easyMode) 195.dp else 175.dp
 
@@ -211,6 +216,65 @@ fun MainRemoteScreen(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Media transport
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NavPillButton(Icons.Default.FastRewind, "Rewind") { onCommand(RemoteCommand.MEDIA_REWIND) }
+                    NavPillButton(Icons.Default.PlayArrow, "Play/Pause") { onCommand(RemoteCommand.MEDIA_PLAY_PAUSE) }
+                    NavPillButton(Icons.Default.FastForward, "Fast forward") { onCommand(RemoteCommand.MEDIA_FAST_FORWARD) }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Menu, Input, Settings, Keypad
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextPill("Menu") { onCommand(RemoteCommand.MENU) }
+                    TextPill("Input") { onCommand(RemoteCommand.TV_INPUT) }
+                    TextPill("Settings") { onCommand(RemoteCommand.SETTINGS) }
+                    TextPill(if (showKeypad) "Hide 123" else "123", highlighted = showKeypad) { showKeypad = !showKeypad }
+                }
+
+                if (showKeypad) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val rows = listOf(
+                        listOf(RemoteCommand.NUM_1, RemoteCommand.NUM_2, RemoteCommand.NUM_3),
+                        listOf(RemoteCommand.NUM_4, RemoteCommand.NUM_5, RemoteCommand.NUM_6),
+                        listOf(RemoteCommand.NUM_7, RemoteCommand.NUM_8, RemoteCommand.NUM_9),
+                        listOf(RemoteCommand.INFO, RemoteCommand.NUM_0, RemoteCommand.GUIDE)
+                    )
+                    rows.forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            row.forEach { cmd ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF131728))
+                                        .border(1.dp, GlassBorder, RoundedCornerShape(12.dp))
+                                        .clickable { onCommand(cmd) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(cmd.label, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // Popular Apps Row: Netflix, YouTube, JioHotstar, Prime Video
@@ -292,5 +356,21 @@ private fun NavPillButton(
             tint = TextPrimary,
             modifier = Modifier.size(20.dp)
         )
+    }
+}
+
+@Composable
+private fun TextPill(label: String, highlighted: Boolean = false, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (highlighted) NeonBlue else Color(0xFF131728))
+            .border(1.dp, GlassBorder, RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = if (highlighted) Color.White else TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }

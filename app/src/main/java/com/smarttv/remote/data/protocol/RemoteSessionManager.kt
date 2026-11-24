@@ -9,6 +9,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
@@ -70,6 +71,14 @@ class RemoteSessionManager {
     private val _tvAwake = MutableStateFlow<Boolean?>(null)
     /** false = TV is in standby (keys are ignored except Power), null = not known yet. */
     val tvAwake: StateFlow<Boolean?> = _tvAwake.asStateFlow()
+
+    /** True while the TV has a text box focused (it reports the box's text and counters). */
+    private val _textFieldActive = MutableStateFlow(false)
+    val textFieldActive: StateFlow<Boolean> = _textFieldActive.asStateFlow()
+    private val _tvText = MutableStateFlow("")
+    val tvText: StateFlow<String> = _tvText.asStateFlow()
+    @Volatile private var imeCounter = 0
+    @Volatile private var fieldCounter = 0
 
     private val _currentApp = MutableStateFlow("")
     val currentApp: StateFlow<String> = _currentApp.asStateFlow()
@@ -272,10 +281,54 @@ class RemoteSessionManager {
     private fun handleIme(f: ProtoField) {
         try {
             val inner = f.bytes?.let { ProtoReader.parse(it) } ?: return
-            val app = ProtoReader.find(inner, 1)?.bytes?.let { ProtoReader.find(ProtoReader.parse(it), 12)?.bytes }
+            val appInfo = ProtoReader.find(inner, 1)?.bytes?.let { ProtoReader.parse(it) }
+            val app = appInfo?.let { ProtoReader.find(it, 12)?.bytes }
             if (app != null) _currentApp.value = String(app, Charsets.UTF_8)
+            appInfo?.let { ProtoReader.find(it, 1) }?.let { imeCounter = it.varint.toInt() }
+            val status = ProtoReader.find(inner, 2)?.bytes?.let { ProtoReader.parse(it) }
+            if (status != null) {
+                ProtoReader.find(status, 1)?.let { fieldCounter = it.varint.toInt() }
+                _tvText.value = ProtoReader.find(status, 2)?.bytes?.let { String(it, Charsets.UTF_8) } ?: ""
+                _textFieldActive.value = true
+                note("TV text box focused (text=\"${_tvText.value}\")")
+            } else {
+                _textFieldActive.value = false
+            }
         } catch (_: Exception) {
         }
+    }
+
+    /**
+     * Replaces the text of the focused TV text box (what the official Google TV remote does).
+     * Returns true once the TV confirms the new text.
+     */
+    suspend fun sendImeText(text: String): Boolean {
+        if (!_isConnected.value || !_textFieldActive.value) return false
+        val ok = withContext(Dispatchers.IO) {
+            try {
+                send {
+                    message(21) {
+                        int(1, imeCounter)
+                        int(2, fieldCounter)
+                        message(3) {
+                            int(1, 1)
+                            message(2) {
+                                int(1, text.length)
+                                int(2, text.length)
+                                string(3, text)
+                            }
+                        }
+                    }
+                }
+                note("sent IME text (${text.length} chars)")
+                true
+            } catch (e: Exception) {
+                markLost("Connection to the TV was lost.")
+                false
+            }
+        }
+        if (!ok) return false
+        return kotlinx.coroutines.withTimeoutOrNull(1200) { _tvText.first { it == text }; true } ?: false
     }
 
     private suspend fun sendConfigure() = send {

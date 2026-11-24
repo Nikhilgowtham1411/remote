@@ -44,6 +44,7 @@ fun TvKeyboardScreen(
     tvModel: String = "Google TV",
     isConnected: Boolean = true,
     currentText: String,
+    tvTextFieldActive: Boolean = false,
     onTextChange: (String) -> Unit,
     onClear: () -> Unit,
     onBackspace: () -> Unit,
@@ -75,8 +76,8 @@ fun TvKeyboardScreen(
             Text("TV Keyboard", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "1. Open a search box on the TV   2. Type here",
-                color = TextSecondary,
+                if (tvTextFieldActive) "TV text box detected. Type here." else "Open a search box on the TV, then type here.",
+                color = if (tvTextFieldActive) NeonGreen else TextSecondary,
                 fontSize = 13.sp
             )
             Spacer(Modifier.height(18.dp))

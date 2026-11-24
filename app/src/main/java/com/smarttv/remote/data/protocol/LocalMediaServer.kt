@@ -70,7 +70,7 @@ class LocalMediaServer(private val context: Context) {
     }
 
     /** The phone's Wi-Fi IPv4 address, the one the TV can reach. */
-    private fun hostAddress(): String? {
+    fun hostAddress(): String? {
         try {
             val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
             val net = cm?.activeNetwork
