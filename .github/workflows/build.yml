@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -48,3 +48,13 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish APK to a public Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${GITHUB_REF_NAME//\//-}"
+          cp app/build/outputs/apk/debug/app-debug.apk SmartTVRemote.apk
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          gh release create "$TAG" SmartTVRemote.apk --target "$GITHUB_SHA" --prerelease --title "APK ($GITHUB_REF_NAME)" --notes "Debug build of $GITHUB_SHA"
